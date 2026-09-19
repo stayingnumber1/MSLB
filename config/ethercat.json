@@ -1,7 +1,13 @@
 {
-  "adapter": "",
-  "dedicatedAdapterConfirmed": false,
+  "adapter": "\\Device\\NPF_{9F9BCCE8-6557-49AC-B6F9-6C5BB3C2B158}",
+  "dedicatedAdapterConfirmed": true,
   "driveModel": "SV660N",
+  "expectedIdentity": {
+    "name": "InoSV635N",
+    "vendorId": 1048576,
+    "productCode": 786702,
+    "revision": 65536
+  },
   "stage": "PRE-OP CoE diagnostics only",
-  "notes": "Set the dedicated wired adapter NPF name after enumeration. Scanning initializes the bus; never share another master's active bus."
+  "notes": "Mapped from Windows adapter 以太网 3 (Realtek PCIe GbE, MAC 00-E0-B4-70-35-6B). Confirm this cable goes only to the stopped SV660N bus before setting dedicatedAdapterConfirmed=true."
 }

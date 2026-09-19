@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from ethercat_probe import as_text, decode_state, read_int, discover, inspect_slave, read_pdo_assignment
+from ethercat_probe import as_text, decode_state, read_int, discover, inspect_slave, read_pdo_assignment, model_name_matches
 
 class Slave:
     name = "test"
@@ -15,6 +15,10 @@ class Slave:
     def sdo_read(self, index, sub): return self.values[(index, sub)]
 
 class Tests(unittest.TestCase):
+    def test_drive_model_name_must_match(self):
+        self.assertTrue(model_name_matches("SV660N", "InoSV660N"))
+        self.assertFalse(model_name_matches("SV660N", "InoSV635N"))
+
     def test_native_adapter_bytes(self):
         self.assertEqual(as_text(b'nic'), 'nic')
         self.assertEqual(as_text('nic'), 'nic')
@@ -62,10 +66,12 @@ class Tests(unittest.TestCase):
             closed = False
             def open(self, name): pass
             def config_init(self): return 1
+            def write_state(self): pass
+            def state_check(self, expected, timeout): return expected
             def read_state(self): return 2
             def close(self): self.closed = True
         master = Master()
-        module = SimpleNamespace(find_adapters=lambda:[SimpleNamespace(name=b"nic")],Master=lambda:master)
+        module = SimpleNamespace(find_adapters=lambda:[SimpleNamespace(name=b"nic")],Master=lambda:master,PREOP_STATE=2)
         self.assertTrue(discover(module,"nic",True)[0]["coe_status_read_ok"])
         self.assertTrue(master.closed)
 

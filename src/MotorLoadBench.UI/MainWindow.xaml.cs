@@ -9,9 +9,14 @@ public partial class MainWindow : Window
     private bool _closing;
     public MainWindow()
     {
-        InitializeComponent(); DataContext = _vm; Loaded += SmokeIfRequested;
+        InitializeComponent(); DataContext = _vm; Loaded += SmokeIfRequested; Loaded += ConnectEtherCatIfRequested;
         _timer.Tick += (_, _) => { _vm.Refresh(); if (_vm.Snapshot is { Connected: true } s) { Trend.WindowSeconds = _vm.TrendWindowIndex switch { 0 => 10, 1 => 60, _ => 0 }; Trend.Push(s); } };
         _timer.Start(); Closing += OnClosing;
+    }
+    private async void ConnectEtherCatIfRequested(object sender, RoutedEventArgs e)
+    {
+        if (!Environment.GetCommandLineArgs().Contains("--ethercat-connect")) return;
+        await _vm.ConnectEtherCatReadOnlyAsync();
     }
     private async void SmokeIfRequested(object sender, RoutedEventArgs e)
     {

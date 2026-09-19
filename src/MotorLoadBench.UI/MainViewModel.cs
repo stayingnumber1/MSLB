@@ -26,6 +26,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string? _configError;
     private readonly string _root = File.Exists(Path.Combine(Environment.CurrentDirectory, "config/bench.json")) ? Environment.CurrentDirectory : AppContext.BaseDirectory;
     private bool _busy;
+    private string? _etherCatReadOnlyStatus;
     public BenchSnapshot? Snapshot => _runtime?.Latest;
     public ObservableCollection<string> Events { get; } = [];
     public string[] ConnectionModes { get; } = ["仿真 / 无硬件", "TwinCAT ADS / 默认只读"];
@@ -40,10 +41,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string RampText { get; set; } = "0.10";
     public string PowerText { get; set; } = "3";
     public string SimRpmText { get; set; } = "300";
+    public string CurveStartRpmText { get; set; } = "100";
+    public string CurveEndRpmText { get; set; } = "400";
+    public string CurveRpmStepText { get; set; } = "100";
+    public string CurveStartTorqueText { get; set; } = "0.05";
+    public string CurveEndTorqueText { get; set; } = "0.20";
+    public string CurveTorqueStepText { get; set; } = "0.05";
     public string RecipeJson { get; set; } = "";
     public string Phase => _orchestrator?.Phase ?? "待机 · 未启动测试";
-    public string ConnectionText => Snapshot?.Connected == true ? (_runtime!.IsSimulation ? "SIMULATION · 已连接" : "ADS · 已连接") : "DISCONNECTED";
-    public string ModeBanner => _runtime?.IsSimulation != false ? "仿真模式：全部数值由模拟模型产生，不代表实机测试结果。" : "ADS 实机模式：" + (_runtime.CanWrite ? "配置核验通过，仍需现场联锁确认。" : "只读观测，所有加载写入被禁止。");
+    public string ConnectionText => Snapshot?.Connected == true ? (_runtime!.IsSimulation ? "SIMULATION · 已连接" : "ADS · 已连接") : _etherCatReadOnlyStatus ?? "DISCONNECTED";
+    public string ModeBanner => _etherCatReadOnlyStatus != null ? "EtherCAT PRE-OP 最近扫描成功：主站已释放网卡，仅完成只读身份/PDO核验；尚未建立持续 OP/PDO 控制连接。" : _runtime?.IsSimulation != false ? "仿真模式：全部数值由模拟模型产生，不代表实机测试结果。" : "ADS 实机模式：" + (_runtime.CanWrite ? "配置核验通过，仍需现场联锁确认。" : "只读观测，所有加载写入被禁止。");
     public string LimitsText => $"当前上限 {_config.Limits.MaxTorqueNm:F2} N·m / {_config.Limits.MaxSpeedRpm:F0} rpm / {_config.Limits.MaxPowerW:F0} W";
     public string RpmDisplay => Snapshot?.SpeedRpm.ToString("F1") ?? "—";
     public string TorqueDisplay => Snapshot is { } s ? $"{s.TargetTorqueNm:F3} / {s.ActualTorqueNm:F3}" : "—";
@@ -65,6 +72,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ICommand StopCommand { get; }
     public ICommand InjectCommand { get; }
     public ICommand OpenRecipeCommand { get; }
+    public ICommand GenerateCurveCommand { get; }
     public ICommand SaveRecipeCommand { get; }
     public ICommand ValidateRecipeCommand { get; }
     public ICommand RunRecipeCommand { get; }
@@ -109,6 +117,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (_orchestrator?.Running == true) throw new InvalidOperationException("先停止当前配方");
             var dlg = new OpenFileDialog { Filter = "测试配方 (*.json)|*.json" };
             if (dlg.ShowDialog() == true) { RecipeJson = await File.ReadAllTextAsync(dlg.FileName); PropertyChanged?.Invoke(this, new(nameof(RecipeJson))); Refresh(); }
+        });
+        GenerateCurveCommand = Command(() =>
+        {
+            if (_orchestrator?.Running == true) throw new InvalidOperationException("先停止当前配方");
+            var plan = new TorqueCurvePlan(Number(CurveStartRpmText), Number(CurveEndRpmText), Number(CurveRpmStepText),
+                Number(CurveStartTorqueText), Number(CurveEndTorqueText), Number(CurveTorqueStepText));
+            var recipe = TorqueCurveRecipeFactory.Create(plan, _config);
+            RecipeJson = JsonSerializer.Serialize(recipe, BenchConfig.Json);
+            PropertyChanged?.Invoke(this, new(nameof(RecipeJson)));
+            AddEvent($"已生成安全受限扭矩曲线：{recipe.Points.Count} 点");
+            return Task.CompletedTask;
         });
         SaveRecipeCommand = Command(async () =>
         {
@@ -169,10 +188,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Events.Insert(0, $"{DateTime.Now:HH:mm:ss.fff}  {message}");
         while (Events.Count > 200) Events.RemoveAt(Events.Count - 1);
     }
+    public async Task ConnectEtherCatReadOnlyAsync()
+    {
+        try { await ProbeEtherCatAsync("scan"); }
+        catch (Exception ex) { ShowError(ex); }
+        finally { Refresh(); }
+    }
     private async Task ProbeEtherCatAsync(string action)
     {
         if (_busy || _runtime != null) throw new InvalidOperationException("请先断开当前会话，再进行 EtherCAT 诊断");
         _busy = true;
+        if (action == "scan") _etherCatReadOnlyStatus = null;
         try
         {
             var python = Path.Combine(_root, ".tools/ethercat-python/Scripts/python.exe");
@@ -203,6 +229,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var error = await stderr;
             AddEvent("EtherCAT 诊断报告：" + Path.Combine(_root, $"artifacts/ethercat/{action}.json"));
             if (process.ExitCode != 0) throw new IOException(output + error);
+            if (action == "scan")
+            {
+                using var report = JsonDocument.Parse(output);
+                var slave = report.RootElement.GetProperty("slaves")[0].GetProperty("name").GetString() ?? "未知从站";
+                _etherCatReadOnlyStatus = $"EtherCAT PRE-OP · {slave} · 只读扫描成功";
+            }
             AddEvent(output);
             AddEvent("诊断完成；尚未建立周期转矩控制连接，Servo ON 和加载不可用");
         }

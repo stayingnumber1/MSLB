@@ -8,6 +8,14 @@ import json
 from pathlib import Path
 import sys
 
+def normalized_model(value):
+    return "".join(c for c in as_text(value).upper() if c.isalnum())
+
+def model_name_matches(expected, actual):
+    expected = normalized_model(expected)
+    actual = normalized_model(actual)
+    return bool(expected) and expected in actual
+
 def as_text(value):
     return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else str(value)
 
@@ -23,7 +31,17 @@ def decode_state(word):
     return "unknown"
 
 def read_int(slave, index, subindex, size, signed=False):
-    data = slave.sdo_read(index, subindex)
+    last_error = None
+    for attempt in range(2):
+        try:
+            data = slave.sdo_read(index, subindex)
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt == 1:
+                raise
+    else:
+        raise last_error
     if len(data) != size:
         raise ValueError(f"0x{index:04X}:{subindex:02X}: expected {size} bytes, got {len(data)}")
     return int.from_bytes(data, "little", signed=signed)
@@ -42,6 +60,18 @@ def read_pdo_assignment(slave, assignment):
         result.append({"mapping": f"0x{pdo:04X}", "entries": entries})
     return result
 
+def read_pdo_mapping(slave, pdo):
+    """Read one fixed/variable PDO mapping without assigning or modifying it."""
+    entries = []
+    for sub in range(1, read_int(slave, pdo, 0, 1) + 1):
+        raw = read_int(slave, pdo, sub, 4)
+        entries.append({"index": f"0x{raw >> 16:04X}", "subindex": (raw >> 8) & 255,
+                        "bits": raw & 255})
+    return {"mapping": f"0x{pdo:04X}", "entries": entries}
+
+def read_text(slave, index):
+    return as_text(slave.sdo_read(index, 0)).rstrip("\0")
+
 def inspect_slave(slave, position):
     result = {"position": position, "name": as_text(slave.name),
               "vendor_id": slave.man, "product_code": slave.id, "revision": slave.rev,
@@ -55,6 +85,10 @@ def inspect_slave(slave, position):
         (0x606c, 0, 4, True, "velocity_raw"),
         (0x6077, 0, 2, True, "torque_raw"),
         (0x6502, 0, 4, False, "supported_modes"),
+        (0x6091, 1, 4, False, "gear_ratio_numerator"),
+        (0x6091, 2, 4, False, "gear_ratio_denominator"),
+        (0x2000, 1, 2, False, "motor_code"),
+        (0x2000, 6, 2, False, "serial_motor_code"),
     ] + [(0x1018, i, 4, False, name) for i, name in enumerate(
         ["identity_vendor", "identity_product", "identity_revision", "identity_serial"], 1)]
     for index, sub, size, signed, name in specs:
@@ -67,6 +101,19 @@ def inspect_slave(slave, position):
     for index, name in [(0x1c12, "rx_pdo"), (0x1c13, "tx_pdo")]:
         try:
             result[name] = read_pdo_assignment(slave, index)
+        except Exception as exc:
+            result["errors"][name] = str(exc)
+    result["available_fixed_pdo"] = {}
+    for pdo in [0x1702, 0x1703, 0x1704, 0x1705, 0x1b02, 0x1b03, 0x1b04]:
+        try:
+            result["available_fixed_pdo"][f"0x{pdo:04X}"] = read_pdo_mapping(slave, pdo)
+        except Exception as exc:
+            result["errors"][f"pdo_0x{pdo:04X}"] = str(exc)
+    result["device_strings"] = {}
+    for index, name in [(0x1008, "device_name"), (0x1009, "hardware_version"),
+                        (0x100a, "software_version")]:
+        try:
+            result["device_strings"][name] = read_text(slave, index)
         except Exception as exc:
             result["errors"][name] = str(exc)
     result["coe_status_read_ok"] = "statusword" in result["objects"]
@@ -86,6 +133,10 @@ def discover(module, adapter, dedicated_bus):
         master.sdo_read_timeout = 300000
         if master.config_init() <= 0:
             raise ConnectionError("No EtherCAT slave found: check dedicated NIC, cable and drive EtherCAT IN")
+        master.state = module.PREOP_STATE
+        master.write_state()
+        if master.state_check(module.PREOP_STATE, 500000) != module.PREOP_STATE:
+            raise ConnectionError("EtherCAT slave did not reach PRE-OP; no CoE reads or control writes were attempted")
         master.read_state()
         return [inspect_slave(s, i) for i, s in enumerate(master.slaves, 1)]
     finally:
@@ -113,7 +164,21 @@ def main(argv=None):
             config = json.loads(args.config.read_text(encoding="utf-8-sig"))
             confirmed = config.get("dedicatedAdapterConfirmed") is True
             report["slaves"] = discover(pysoem, config.get("adapter", ""), confirmed)
-            report["ok"] = all(s["coe_status_read_ok"] for s in report["slaves"])
+            report["configured_drive_model"] = config.get("driveModel", "")
+            expected = config.get("expectedIdentity", {})
+            actual = report["slaves"][0] if len(report["slaves"]) == 1 else {}
+            report["identity_match"] = bool(expected) and all([
+                as_text(actual.get("name", "")) == as_text(expected.get("name", "")),
+                actual.get("vendor_id") == expected.get("vendorId"),
+                actual.get("product_code") == expected.get("productCode"),
+                actual.get("revision") == expected.get("revision"),
+            ])
+            report["label_name_match"] = model_name_matches(report["configured_drive_model"], actual.get("name", ""))
+            report["ok"] = all(s["coe_status_read_ok"] for s in report["slaves"]) and report["identity_match"]
+            if not report["label_name_match"]:
+                report["identity_warning"] = "Physical label is configured as SV660N but the EtherCAT EEPROM name is InoSV635N. Read-only identity is pinned; keep all drive writes locked until the vendor documentation explains this difference."
+            if not report["identity_match"]:
+                report["identity_error"] = "Slave identity differs from the commissioned name/vendor/product/revision tuple."
             report["note"] = "PRE-OP commissioning only. Not an operational CST connection."
             if not report["ok"]:
                 code = 2

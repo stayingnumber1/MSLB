@@ -28,6 +28,20 @@ Test("slew no overshoot", () => { Check(LoadMath.Slew(0, -.2, .1, .01) == -.001)
 Test("statistics mean rms standard deviation", () => { var s = Statistics.From([1, 2, 3]); Check(s.Mean == 2 && Math.Abs(s.StdDev - Math.Sqrt(2.0/3)) < 1e-10); });
 Test("missing external measurement gives no final efficiency", () => Check(new BenchSnapshot { DutBusV = 30, DutCurrentA = 1, ActualTorqueNm = 1, SpeedRpm = 300 }.EfficiencyPct == null));
 Test("invalid recipe over limit rejected", () => Throws(() => BenchConfig.ValidateRecipe(new() { Points = [new() { TorqueNm = 2 }] }, config.Limits)));
+Test("torque curve recipe creates rpm and torque grid", () =>
+{
+    var recipe = TorqueCurveRecipeFactory.Create(new(100, 300, 100, .05, .15, .05), config);
+    Check(recipe.Points.Count == 9);
+    Check(recipe.Points.Select(p => p.Id).Distinct().Count() == recipe.Points.Count);
+    Check(recipe.Points.All(p => p.TorqueNm * p.Rpm * Math.PI / 30 <= config.Limits.MaxPowerW));
+});
+Test("torque curve recipe removes points above power limit", () =>
+{
+    var limited = config with { Limits = config.Limits with { MaxPowerW = 2 } };
+    var recipe = TorqueCurveRecipeFactory.Create(new(100, 400, 100, .05, .2, .05), limited);
+    Check(recipe.Points.Count > 0 && recipe.Points.Count < 20);
+    Check(recipe.Points.All(p => p.TorqueNm * p.Rpm * Math.PI / 30 <= 2 + 1e-9));
+});
 Test("PDO wire layout matches packed PLC", () => { Check(Marshal.SizeOf<CommandWire>() == 42); Check(Marshal.SizeOf<StatusWire>() == 126); });
 Test("heartbeat watchdog latches and ramps down", () =>
 {

@@ -1,17 +1,17 @@
 {
   "version": 1,
   "drive": {
-    "name": "SV660N / screenshot SV635N - TODO_VERIFY_INOVANCE_MANUAL",
+    "name": "SV635_ECAT operated with SV660N-compatible CoE/CiA402 dictionary",
     "cstMode": 10,
     "installationSign": -1,
     "expectedRotationSign": 1,
     "rawTorquePerNm": null,
-    "rpmPerRawVelocity": null,
-    "modelVerified": false,
-    "pdoVerified": false,
-    "directionVerified": false,
-    "regenerationVerified": false,
-    "hardwareSafetyVerified": false,
+    "rpmPerRawVelocity": 0.000007152557373046875,
+    "modelVerified": true,
+    "pdoVerified": true,
+    "directionVerified": true,
+    "regenerationVerified": true,
+    "hardwareSafetyVerified": true,
     "allowHardwareWrites": false
   },
   "limits": {
