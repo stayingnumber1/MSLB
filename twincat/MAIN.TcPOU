@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><POU Name="MAIN" Id="{00000000-0000-4000-8000-000000000009}"><Declaration><![CDATA[PROGRAM MAIN
+VAR
+ Axis : FB_CiA402Axis;
+ Safety : FB_SafetyInterlock;
+ Load : FB_LoadTorqueControl;
+ Cmd : ST_Command;
+ LastCommit, CommitCopy, Tick, Revision : UDINT;
+ SpeedRpm, TorqueNm, StopAge : LREAL;
+ ConfigOk, WantEnable, DisablePending, ResetPulse, EnablePulse, StopLoad, HardTrip, InvalidCommand : BOOL;
+ FaultMask : UDINT;
+END_VAR]]></Declaration><Implementation><ST><![CDATA[
+(* Import as a 1 ms cyclic task. This is a commissioning template, not certified safety code. *)
+ResetPulse := FALSE; EnablePulse := FALSE;
+CommitCopy := GVL_Hmi.CommandCommit;
+IF CommitCopy <> LastCommit THEN
+ Cmd := GVL_Hmi.Command;
+ IF CommitCopy = GVL_Hmi.CommandCommit THEN
+  LastCommit := CommitCopy;
+  ResetPulse := Cmd.Reset = 1;
+  EnablePulse := Cmd.Enable = 1;
+ END_IF
+END_IF
+InvalidCommand := NOT (Cmd.TorqueNm >= 0 AND Cmd.TorqueNm <= GVL_Config.MaxTorqueNm) OR
+ NOT (Cmd.PowerW >= 0 AND Cmd.PowerW <= GVL_Config.MaxPowerW) OR
+ NOT (Cmd.RampNmPerSec > 0 AND Cmd.RampNmPerSec <= GVL_Config.MaxRampNmPerSec) OR
+ Cmd.Mode < 0 OR Cmd.Mode > 2;
+ConfigOk := GVL_Config.Commissioned AND GVL_Config.RawTorquePerNm > 0 AND GVL_Config.RpmPerRawVelocity > 0 AND
+ GVL_Config.InstallationSign * GVL_Config.RotationSign = -1 AND GVL_Config.DcBusTripV > 0 AND GVL_Config.MotorTripC > GVL_Config.MotorWarnC AND
+ GVL_Config.MapCount >= 2 AND GVL_Config.MapCount <= 16 AND GVL_Config.EnvelopeCount >= 2 AND GVL_Config.EnvelopeCount <= 16 AND
+ Cmd.ProtocolVersion = 1 AND Cmd.ProfileFingerprint = GVL_Config.ProfileFingerprint AND NOT InvalidCommand;
+SpeedRpm := DINT_TO_LREAL(GVL_Drive.ActualVelocityRaw) * GVL_Config.RpmPerRawVelocity;
+TorqueNm := 0;
+IF GVL_Config.RawTorquePerNm > 0 THEN TorqueNm := INT_TO_LREAL(GVL_Drive.ActualTorqueRaw)/GVL_Config.RawTorquePerNm; END_IF
+Safety(Heartbeat:=Cmd.Heartbeat, SpeedRpm:=SpeedRpm, TorqueNm:=TorqueNm, ConfigOk:=ConfigOk,
+ ResetFault:=ResetPulse, ServoOn:=Axis.OperationEnabled);
+FaultMask := Safety.FaultMask;
+IF Load.PeakTrip THEN FaultMask := FaultMask OR 4096; END_IF
+IF EnablePulse AND FaultMask = 0 AND ABS(TorqueNm) <= GVL_Config.ZeroTorqueNm THEN
+ WantEnable := TRUE; DisablePending := FALSE;
+END_IF
+IF Cmd.Disable = 1 OR FaultMask <> 0 THEN DisablePending := TRUE; END_IF
+StopLoad := Cmd.Stop = 1 OR DisablePending;
+HardTrip := Safety.Severe OR Load.PeakTrip;
+IF Axis.OperationEnabled AND GVL_Drive.ModeDisplay <> GVL_Config.CstMode THEN
+ HardTrip := TRUE; FaultMask := FaultMask OR 1024; DisablePending := TRUE;
+END_IF
+Load(Command:=Cmd, SpeedRpm:=SpeedRpm, ActualTorqueNm:=TorqueNm,
+ Active:=Axis.OperationEnabled AND GVL_Drive.ModeDisplay=GVL_Config.CstMode,
+ Stop:=StopLoad, HardStop:=HardTrip OR ABS(SpeedRpm) < GVL_Config.MinLoadSpeedRpm, Reset:=ResetPulse);
+IF DisablePending OR Cmd.Stop = 1 THEN
+ StopAge := StopAge + GVL_Config.CycleSeconds;
+ IF ABS(Load.TargetNm) <= GVL_Config.ZeroTorqueNm AND ABS(TorqueNm) <= GVL_Config.ZeroTorqueNm THEN
+  IF DisablePending THEN WantEnable := FALSE; END_IF
+  StopAge := 0;
+ ELSIF StopAge > GVL_Config.StopTimeoutSeconds THEN
+  HardTrip := TRUE; WantEnable := FALSE; FaultMask := FaultMask OR 1024;
+ END_IF
+ELSE StopAge := 0; END_IF
+IF HardTrip THEN WantEnable := FALSE; END_IF
+Axis(Statusword:=GVL_Drive.Statusword, Enable:=WantEnable, ResetFault:=ResetPulse AND NOT Axis.OperationEnabled, QuickStop:=HardTrip);
+GVL_Drive.ModeCommand := GVL_Config.CstMode;
+GVL_Drive.Controlword := Axis.Controlword;
+GVL_Drive.TargetTorqueRaw := 0;
+IF ConfigOk AND Axis.OperationEnabled AND NOT HardTrip AND GVL_Drive.ModeDisplay=GVL_Config.CstMode THEN
+ GVL_Drive.TargetTorqueRaw := Load.TargetRaw;
+END_IF
+(* Versioned snapshot: reject torn host reads. Unknown vendor data remains marked invalid. *)
+Revision := Revision + 2;
+GVL_Hmi.Status.RevisionStart := Revision-1;
+GVL_Hmi.Status.ProtocolVersion := 1;
+GVL_Hmi.Status.ProfileFingerprint := GVL_Config.ProfileFingerprint;
+GVL_Hmi.Status.State := 1;
+IF Axis.OperationEnabled THEN
+ GVL_Hmi.Status.State := 2;
+ IF ABS(Load.TargetNm) > GVL_Config.ZeroTorqueNm THEN GVL_Hmi.Status.State := 4; END_IF
+ IF StopLoad AND ABS(TorqueNm) > GVL_Config.ZeroTorqueNm THEN GVL_Hmi.Status.State := 5; END_IF
+END_IF
+IF FaultMask <> 0 THEN GVL_Hmi.Status.State := 6; END_IF
+GVL_Hmi.Status.EtherCatOnline := BOOL_TO_BYTE(GVL_Drive.EcatOp AND GVL_Drive.WkcOk);
+GVL_Hmi.Status.DriveReady := BOOL_TO_BYTE(FaultMask=0);
+GVL_Hmi.Status.ServoOn := BOOL_TO_BYTE(Axis.OperationEnabled);
+GVL_Hmi.Status.TargetTorqueNm := Load.TargetNm;
+GVL_Hmi.Status.ActualTorqueNm := TorqueNm;
+GVL_Hmi.Status.SpeedRpm := SpeedRpm;
+GVL_Hmi.Status.DcBusV := GVL_Drive.DcBusV;
+GVL_Hmi.Status.MotorTempC := GVL_Drive.MotorTempC;
+GVL_Hmi.Status.BrakeTempC := GVL_Drive.BrakeTempC;
+GVL_Hmi.Status.ServoCurrentA := GVL_Drive.CurrentA;
+GVL_Hmi.Status.ExternalTorqueNm := GVL_Drive.ExternalTorqueNm;
+GVL_Hmi.Status.ExternalSpeedRpm := GVL_Drive.ExternalSpeedRpm;
+GVL_Hmi.Status.DutBusV := GVL_Drive.DutBusV;
+GVL_Hmi.Status.DutCurrentA := GVL_Drive.DutCurrentA;
+GVL_Hmi.Status.ValidMask := 0;
+IF GVL_Drive.DcBusValid THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 1; END_IF
+IF GVL_Drive.MotorTempValid THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 2; END_IF
+IF GVL_Drive.BrakeTempValid THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 4; END_IF
+IF GVL_Drive.CurrentValid THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 8; END_IF
+IF GVL_Drive.ExternalHealthy THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 16; END_IF
+IF GVL_Drive.DutPowerHealthy THEN GVL_Hmi.Status.ValidMask := GVL_Hmi.Status.ValidMask OR 32; END_IF
+GVL_Hmi.Status.ErrorCode := UINT_TO_UDINT(GVL_Drive.ErrorCode);
+GVL_Hmi.Status.InterlockMask := FaultMask;
+Tick := Tick+1; GVL_Hmi.Status.Heartbeat := Tick;
+GVL_Hmi.Status.RevisionEnd := Revision;
+GVL_Hmi.Status.RevisionStart := Revision;]]></ST></Implementation></POU></TcPlcObject>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><GVL Name="GVL_Drive" Id="{00000000-0000-4000-8000-000000000004}"><Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+ (* TODO_VERIFY_INOVANCE_MANUAL: link each field only after actual ESI/firmware verification.
+    No physical addresses are guessed. Unlinked safety inputs intentionally remain FALSE. *)
+ Statusword : WORD;
+ ModeDisplay : SINT;
+ ActualTorqueRaw : INT;
+ ActualVelocityRaw : DINT;
+ ErrorCode : UINT;
+ EcatOp, WkcOk : BOOL;
+ EmergencyOk, GuardOk, RegenerationOk, StoOk : BOOL;
+ DcBusValid, MotorTempValid, BrakeTempValid, CurrentValid : BOOL;
+ DcBusV, MotorTempC, BrakeTempC, CurrentA : LREAL;
+ ExternalHealthy, DutPowerHealthy : BOOL;
+ ExternalTorqueNm, ExternalSpeedRpm, DutBusV, DutCurrentA : LREAL;
+ Controlword : WORD;
+ ModeCommand : SINT;
+ TargetTorqueRaw : INT;
+END_VAR]]></Declaration></GVL></TcPlcObject>

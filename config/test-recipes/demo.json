@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "P0 仿真三点",
+  "points": [
+    {
+      "id": "P01",
+      "rpm": 200,
+      "torqueNm": 0.05,
+      "stableSeconds": 1,
+      "sampleSeconds": 2
+    },
+    {
+      "id": "P02",
+      "rpm": 300,
+      "torqueNm": 0.1,
+      "stableSeconds": 1,
+      "sampleSeconds": 2
+    },
+    {
+      "id": "P03",
+      "rpm": 400,
+      "torqueNm": 0.15,
+      "stableSeconds": 1,
+      "sampleSeconds": 2
+    }
+  ]
+}

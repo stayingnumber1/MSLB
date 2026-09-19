@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><POU Name="FB_LoadTorqueControl" Id="{00000000-0000-4000-8000-000000000008}"><Declaration><![CDATA[FUNCTION_BLOCK FB_LoadTorqueControl
+VAR_INPUT
+ Command : ST_Command;
+ SpeedRpm, ActualTorqueNm : LREAL;
+ Active, Stop, HardStop, Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+ TargetNm : LREAL;
+ TargetRaw : INT;
+ PeakTrip : BOOL;
+END_VAR
+VAR
+ Cap, Demand, Rate, Step, Rpm, Ratio, PeakAge, Cooldown : LREAL;
+ I : INT;
+END_VAR]]></Declaration><Implementation><ST><![CDATA[
+Rpm := ABS(SpeedRpm);
+Cap := GVL_Config.MaxTorqueNm;
+IF Rpm > 0 THEN Cap := MIN(Cap, GVL_Config.MaxPowerW / (Rpm * 3.141592653589793 / 30)); END_IF
+Demand := GVL_Config.EnvelopeTorque[GVL_Config.EnvelopeCount];
+FOR I := 2 TO GVL_Config.EnvelopeCount DO
+ IF Rpm <= GVL_Config.EnvelopeRpm[I] THEN
+  Ratio := LIMIT(0, (Rpm-GVL_Config.EnvelopeRpm[I-1])/(GVL_Config.EnvelopeRpm[I]-GVL_Config.EnvelopeRpm[I-1]), 1);
+  Demand := GVL_Config.EnvelopeTorque[I-1] + Ratio*(GVL_Config.EnvelopeTorque[I]-GVL_Config.EnvelopeTorque[I-1]);
+  EXIT;
+ END_IF
+END_FOR
+Cap := MIN(Cap, Demand);
+IF GVL_Drive.MotorTempC > GVL_Config.MotorWarnC THEN
+ Cap := Cap * LIMIT(0, (GVL_Config.MotorTripC-GVL_Drive.MotorTempC)/(GVL_Config.MotorTripC-GVL_Config.MotorWarnC), 1);
+END_IF
+Demand := Command.TorqueNm;
+IF Command.Mode = 1 AND Rpm >= GVL_Config.MinLoadSpeedRpm THEN
+ Demand := Command.PowerW / (Rpm * 3.141592653589793 / 30);
+ELSIF Command.Mode = 2 THEN
+ Demand := GVL_Config.MapTorque[GVL_Config.MapCount];
+ FOR I := 2 TO GVL_Config.MapCount DO
+  IF Rpm <= GVL_Config.MapRpm[I] THEN
+   Ratio := LIMIT(0, (Rpm-GVL_Config.MapRpm[I-1])/(GVL_Config.MapRpm[I]-GVL_Config.MapRpm[I-1]), 1);
+   Demand := GVL_Config.MapTorque[I-1] + Ratio*(GVL_Config.MapTorque[I]-GVL_Config.MapTorque[I-1]); EXIT;
+  END_IF
+ END_FOR
+END_IF
+Demand := LIMIT(0, Demand, Cap);
+IF NOT Active OR Stop OR Rpm < GVL_Config.MinLoadSpeedRpm OR SpeedRpm*GVL_Config.RotationSign < 0 THEN Demand := 0; END_IF
+IF Demand > GVL_Config.ContinuousTorqueNm THEN
+ IF Cooldown > 0 THEN Demand := GVL_Config.ContinuousTorqueNm;
+ ELSE PeakAge := PeakAge + GVL_Config.CycleSeconds; END_IF
+ IF PeakAge >= GVL_Config.PeakSeconds THEN PeakTrip := TRUE; END_IF
+ELSIF PeakAge > 0 THEN Cooldown := GVL_Config.PeakCooldownSeconds; PeakAge := 0; END_IF
+Cooldown := MAX(0, Cooldown-GVL_Config.CycleSeconds);
+IF Reset AND NOT Active AND ABS(ActualTorqueNm) <= GVL_Config.ZeroTorqueNm THEN PeakTrip := FALSE; END_IF
+IF PeakTrip THEN Demand := 0; END_IF
+Demand := Demand * GVL_Config.InstallationSign;
+Rate := MIN(Command.RampNmPerSec, GVL_Config.MaxRampNmPerSec);
+IF Stop OR NOT Active OR PeakTrip THEN Rate := GVL_Config.StopRampNmPerSec; END_IF
+Step := Rate * GVL_Config.CycleSeconds;
+IF HardStop OR PeakTrip THEN TargetNm := 0;
+ELSE TargetNm := TargetNm + LIMIT(-Step, Demand-TargetNm, Step); END_IF
+IF GVL_Config.RawTorquePerNm > 0 THEN
+ TargetRaw := LREAL_TO_INT(LIMIT(-32767, TargetNm*GVL_Config.RawTorquePerNm, 32767));
+ELSE TargetRaw := 0; TargetNm := 0; END_IF]]></ST></Implementation></POU></TcPlcObject>

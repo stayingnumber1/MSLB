@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "drive": {
+    "family": "SV660N",
+    "exactModel": null
+  },
+  "motor": {
+    "family": "MS1H4",
+    "ratedPowerW": 750,
+    "exactModel": null,
+    "ratedTorqueNm": null,
+    "ratedSpeedRpm": null
+  },
+  "coupling": {
+    "type": "friction_wheel",
+    "servoWheelEffectiveRadiusM": null,
+    "dutContactRadiusM": null,
+    "relativeRotationSign": null
+  },
+  "measurement": {
+    "torqueSensor": "DYN-200",
+    "torqueSensorAxis": null,
+    "dutSpeedSource": null
+  },
+  "regeneration": {
+    "continuousAbsorptionW": null
+  },
+  "hardwareWritesEnabled": false
+}

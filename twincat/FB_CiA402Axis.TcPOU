@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><POU Name="FB_CiA402Axis" Id="{00000000-0000-4000-8000-000000000006}"><Declaration><![CDATA[FUNCTION_BLOCK FB_CiA402Axis
+VAR_INPUT
+ Statusword : WORD;
+ Enable, ResetFault, QuickStop : BOOL;
+END_VAR
+VAR_OUTPUT
+ Controlword : WORD;
+ OperationEnabled, DriveFault : BOOL;
+END_VAR
+VAR
+ LastReset : BOOL;
+END_VAR]]></Declaration><Implementation><ST><![CDATA[
+OperationEnabled := (Statusword AND 16#006F) = 16#0027;
+DriveFault := (Statusword AND 16#0008) <> 0;
+Controlword := 0;
+IF DriveFault THEN
+ IF ResetFault AND NOT LastReset THEN Controlword := 16#0080; END_IF
+ELSIF QuickStop THEN
+ Controlword := 16#0002;
+ELSIF Enable THEN
+ CASE Statusword AND 16#006F OF
+  16#0040: Controlword := 16#0006;
+  16#0021: Controlword := 16#0007;
+  16#0023, 16#0027: Controlword := 16#000F;
+ ELSE Controlword := 0;
+ END_CASE
+END_IF
+LastReset := ResetFault;]]></ST></Implementation></POU></TcPlcObject>

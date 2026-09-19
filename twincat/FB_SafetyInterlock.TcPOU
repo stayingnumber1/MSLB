@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><POU Name="FB_SafetyInterlock" Id="{00000000-0000-4000-8000-000000000007}"><Declaration><![CDATA[FUNCTION_BLOCK FB_SafetyInterlock
+VAR_INPUT
+ Heartbeat : UDINT;
+ SpeedRpm, TorqueNm : LREAL;
+ ConfigOk, ResetFault, ServoOn : BOOL;
+END_VAR
+VAR_OUTPUT
+ FaultMask : UDINT;
+ Severe : BOOL;
+END_VAR
+VAR
+ LastHeartbeat, Active : UDINT;
+ HeartbeatAge, OverTorqueAge : LREAL;
+END_VAR]]></Declaration><Implementation><ST><![CDATA[
+IF Heartbeat <> LastHeartbeat THEN HeartbeatAge := 0; LastHeartbeat := Heartbeat;
+ELSE HeartbeatAge := HeartbeatAge + GVL_Config.CycleSeconds; END_IF
+Active := 0;
+IF NOT GVL_Drive.EmergencyOk OR NOT GVL_Drive.StoOk THEN Active := Active OR 1; END_IF
+IF NOT GVL_Drive.GuardOk THEN Active := Active OR 2; END_IF
+IF NOT GVL_Drive.RegenerationOk THEN Active := Active OR 4; END_IF
+IF NOT GVL_Drive.EcatOp OR NOT GVL_Drive.WkcOk THEN Active := Active OR 8; END_IF
+IF HeartbeatAge > GVL_Config.HeartbeatTimeoutSeconds THEN Active := Active OR 16; END_IF
+IF ABS(SpeedRpm) > GVL_Config.MaxSpeedRpm THEN Active := Active OR 32; END_IF
+IF GVL_Drive.MotorTempC >= GVL_Config.MotorTripC OR GVL_Drive.BrakeTempC >= GVL_Config.BrakeTripC THEN Active := Active OR 64; END_IF
+IF GVL_Drive.DcBusV >= GVL_Config.DcBusTripV THEN Active := Active OR 128; END_IF
+IF (GVL_Drive.Statusword AND 16#0008) <> 0 OR GVL_Drive.ErrorCode <> 0 THEN Active := Active OR 256; END_IF
+IF SpeedRpm * GVL_Config.RotationSign < -GVL_Config.MinLoadSpeedRpm THEN Active := Active OR 512; END_IF
+IF NOT ConfigOk OR NOT GVL_Drive.DcBusValid OR NOT GVL_Drive.MotorTempValid OR NOT GVL_Drive.BrakeTempValid THEN Active := Active OR 1024; END_IF
+IF NOT (ABS(SpeedRpm) < 1.0E10) OR NOT (ABS(TorqueNm) < 1.0E10) OR
+ NOT (ABS(GVL_Drive.MotorTempC) < 1.0E6) OR NOT (ABS(GVL_Drive.BrakeTempC) < 1.0E6) OR
+ NOT (ABS(GVL_Drive.DcBusV) < 1.0E6) THEN Active := Active OR 1024; END_IF
+IF ABS(TorqueNm) > GVL_Config.MaxTorqueNm + GVL_Config.OverTorqueMarginNm THEN
+ OverTorqueAge := OverTorqueAge + GVL_Config.CycleSeconds;
+ELSE OverTorqueAge := 0; END_IF
+IF OverTorqueAge >= GVL_Config.OverTorqueDelaySeconds THEN Active := Active OR 2048; END_IF
+(* Explicit fault reset pulse is passed to the drive even while its fault bit is present.
+   The safety latch clears only after physical faults have cleared and a later explicit reset. *)
+IF ResetFault AND Active = 0 AND NOT ServoOn AND ABS(TorqueNm) <= GVL_Config.ZeroTorqueNm THEN FaultMask := 0; END_IF
+FaultMask := FaultMask OR Active;
+Severe := (FaultMask AND 16#FFFFFFEF) <> 0;]]></ST></Implementation></POU></TcPlcObject>

@@ -1,0 +1,60 @@
+<Window x:Class="MotorLoadBench.UI.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:MotorLoadBench.UI" Title="Motor Load Bench · 伺服测功台" Width="1420" Height="940" MinWidth="1100" MinHeight="760" Background="#091421" FontFamily="Microsoft YaHei UI" FontSize="13">
+<Grid Margin="24">
+<Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="150"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+<DockPanel Margin="0,0,0,18">
+<StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right"><TextBlock Text="{Binding ConnectionText}" Foreground="#52DDC1" FontSize="16"/><TextBlock Text="{Binding LimitsText}" Foreground="#96ADC3" Margin="0,5,0,0"/></StackPanel>
+<StackPanel><TextBlock Text="MOTOR LOAD BENCH" FontSize="27" FontWeight="Bold"/><TextBlock Text="伺服阻尼加载 · DUT 控速 / 负载伺服控矩" Foreground="#96ADC3" Margin="0,5,0,0"/></StackPanel>
+</DockPanel>
+<Border Grid.Row="1" Background="#173846" Padding="12" Margin="0,0,0,14"><TextBlock Text="{Binding ModeBanner}" TextWrapping="Wrap" Foreground="#97E4D5"/></Border>
+<TabControl Grid.Row="2" Background="#102035" BorderBrush="#263D52">
+<TabItem Header="测试控制"><ScrollViewer VerticalScrollBarVisibility="Auto"><Grid Margin="18">
+<Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+<StackPanel>
+<TextBlock Text="连接与联锁" FontWeight="Bold" FontSize="17"/>
+<ComboBox ItemsSource="{Binding ConnectionModes}" SelectedIndex="{Binding ConnectionMode}"/>
+<WrapPanel><Button Content="连接" Command="{Binding ConnectCommand}"/><Button Content="断开" Command="{Binding DisconnectCommand}"/></WrapPanel>
+<WrapPanel><Button Content="EtherCAT 网卡" Command="{Binding EtherCatAdaptersCommand}"/><Button Content="CoE 扫描" Command="{Binding EtherCatScanCommand}"/></WrapPanel>
+<TextBlock Text="仅诊断；配置独立网卡后可扫描，不使能电机" Foreground="#97ADC1" TextWrapping="Wrap"/>
+<TextBlock Text="使能前确认" Foreground="#97ADC1"/>
+<CheckBox Content="机械装夹、护罩及独立急停已确认" IsChecked="{Binding GuardConfirmed}"/>
+<CheckBox Content="方向、回生及当前限值已确认" IsChecked="{Binding DirectionConfirmed}"/>
+<WrapPanel Margin="0,10,0,0"><Button Content="Servo ON" Command="{Binding EnableCommand}"/><Button Content="Servo OFF" Command="{Binding DisableCommand}"/><Button Content="故障复位" Command="{Binding ResetCommand}"/></WrapPanel>
+<Separator Margin="0,8,0,14"/>
+<TextBlock Text="负载模式" FontWeight="Bold" FontSize="17"/>
+<ComboBox ItemsSource="{Binding LoadModes}" SelectedIndex="{Binding LoadModeIndex}"/>
+<UniformGrid Columns="2"><StackPanel><TextBlock Text="阻力矩 / N·m（正值）"/><TextBox Text="{Binding TorqueText}"/></StackPanel><StackPanel><TextBlock Text="斜坡 / N·m/s"/><TextBox Text="{Binding RampText}"/></StackPanel><StackPanel><TextBlock Text="恒功率 / W"/><TextBox Text="{Binding PowerText}"/></StackPanel><StackPanel><TextBlock Text="仿真 DUT / rpm"/><TextBox Text="{Binding SimRpmText}"/></StackPanel></UniformGrid>
+<WrapPanel><Button Content="开始加载" Command="{Binding LoadCommand}" Background="#147767"/><Button Content="停止 / 回零" Command="{Binding StopCommand}" Background="#925032"/></WrapPanel>
+<TextBlock Text="{Binding Phase}" TextWrapping="Wrap" Foreground="#F3C884" Margin="0,5,8,12"/>
+<TextBlock Text="仿真故障注入（不连接实机）" Foreground="#97ADC1"/>
+<WrapPanel Margin="0,6,0,0"><Button Content="模拟急停" Command="{Binding InjectCommand}" CommandParameter="Emergency"/><Button Content="模拟掉站" Command="{Binding InjectCommand}" CommandParameter="EtherCat"/><Button Content="模拟过温" Command="{Binding InjectCommand}" CommandParameter="Overtemp"/><Button Content="移除注入" Command="{Binding InjectCommand}" CommandParameter="None"/></WrapPanel>
+<TextBlock Text="软件停止不是硬件急停。实机 STO 必须由独立安全链执行。" TextWrapping="Wrap" Foreground="#E8AC96" Margin="0,5,8,0"/>
+</StackPanel>
+<Grid Grid.Column="1" Margin="22,0,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="320"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+<UniformGrid Columns="3">
+<StackPanel Margin="8"><TextBlock Text="实际转速 / rpm" Foreground="#99B0C5"/><TextBlock Text="{Binding RpmDisplay}" FontSize="32" FontWeight="Bold" Foreground="#68C8FF"/></StackPanel>
+<StackPanel Margin="8"><TextBlock Text="目标 / 驱动估算转矩 N·m" Foreground="#99B0C5"/><TextBlock Text="{Binding TorqueDisplay}" FontSize="26" FontWeight="Bold"/></StackPanel>
+<StackPanel Margin="8"><TextBlock Text="机械功率 / W" Foreground="#99B0C5"/><TextBlock Text="{Binding PowerDisplay}" FontSize="32" FontWeight="Bold" Foreground="#61DEC0"/></StackPanel>
+<StackPanel Margin="8"><TextBlock Text="伺服 DC Bus / V" Foreground="#99B0C5"/><TextBlock Text="{Binding BusDisplay}" FontSize="24"/></StackPanel>
+<StackPanel Margin="8"><TextBlock Text="电机 / 电阻温度 °C" Foreground="#99B0C5"/><TextBlock Text="{Binding TemperatureDisplay}" FontSize="24"/></StackPanel>
+<StackPanel Margin="8"><TextBlock Text="独立测扭 / 效率" Foreground="#99B0C5"/><TextBlock Text="{Binding EfficiencyDisplay}" FontSize="21"/></StackPanel>
+</UniformGrid>
+<DockPanel Grid.Row="1" Margin="8,10"><TextBlock Text="{Binding StateText}" VerticalAlignment="Center"/><ComboBox DockPanel.Dock="Right" Width="150" ItemsSource="{Binding TrendWindows}" SelectedIndex="{Binding TrendWindowIndex}"/></DockPanel>
+<local:TrendControl x:Name="Trend" Grid.Row="2"/>
+<TextBlock Grid.Row="3" Text="{Binding SessionText}" Foreground="#91A8BB" TextWrapping="Wrap" Margin="8,12"/>
+</Grid>
+</Grid></ScrollViewer></TabItem>
+<TabItem Header="自动测试配方"><Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+<TextBlock Text="配方使用 JSON 编辑。仿真自动切换 DUT 转速；实机仅等待转速窗口，不下发 DUT 转速命令。" TextWrapping="Wrap" Margin="0,0,0,12"/>
+<WrapPanel Grid.Row="1"><Button Content="打开配方" Command="{Binding OpenRecipeCommand}"/><Button Content="保存配方" Command="{Binding SaveRecipeCommand}"/><Button Content="校验配方" Command="{Binding ValidateRecipeCommand}"/><Button Content="运行配方" Command="{Binding RunRecipeCommand}" Background="#147767"/><Button Content="中止 / 回零" Command="{Binding StopCommand}"/><Button Content="导出结果汇总" Command="{Binding ExportCommand}"/></WrapPanel>
+<TextBox Grid.Row="2" Text="{Binding RecipeJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" AcceptsTab="True" FontFamily="Consolas" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+</Grid></TabItem>
+<TabItem Header="配置与联机"><ScrollViewer Margin="20"><StackPanel>
+<TextBlock Text="默认实机写入锁定" FontSize="22" FontWeight="Bold" Margin="0,0,0,12"/>
+<TextBlock Text="{Binding ConfigurationInfo}" TextWrapping="Wrap" FontFamily="Consolas" LineHeight="25"/>
+<TextBlock Text="当前采用 PC 主站直连 EtherCAT CoE / CiA402，无需 PLC。点击 EtherCAT 网卡检查接口；配置 config/ethercat.json 后用 CoE 扫描读取状态及 PDO。该入口目前仅用于 PRE-OP 诊断，周期转矩控制尚未接入。原 ADS 入口保留用于旧方案。" TextWrapping="Wrap" Margin="0,20,0,10"/>
+<TextBlock Text="P0：仿真验收 → P1：实机只读2小时 → P2：≤0.2 N·m / ≤500 rpm → 经审核后逐步提高。尚未完成实机、TwinCAT编译及8小时长稳验收。" TextWrapping="Wrap" Foreground="#F3C884"/>
+</StackPanel></ScrollViewer></TabItem>
+</TabControl>
+<Border Grid.Row="3" Background="#112136" Padding="12" Margin="0,14,0,0"><DockPanel><TextBlock DockPanel.Dock="Top" Text="事件 / 报警历史" FontWeight="Bold" Margin="0,0,0,8"/><ListBox ItemsSource="{Binding Events}" Background="Transparent" BorderThickness="0" Foreground="#DBC8B0" FontFamily="Consolas" FontSize="12"/></DockPanel></Border>
+<TextBlock Grid.Row="4" Text="独立硬件安全链  •  软件回零确认  •  原始数据与配置指纹留存" Foreground="#6E879F" Margin="0,10,0,0"/>
+</Grid></Window>

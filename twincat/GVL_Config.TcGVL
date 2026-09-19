@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.0"><GVL Name="GVL_Config" Id="{00000000-0000-4000-8000-000000000005}"><Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+ (* This commissioning lock is NEVER written by the UI. Verify hardware and compile in TwinCAT. *)
+ Commissioned : BOOL := FALSE;
+ ProfileFingerprint : UDINT := 0;
+ CycleSeconds : LREAL := 0.001;
+ RawTorquePerNm : LREAL := 0; (* TODO_VERIFY_INOVANCE_MANUAL *)
+ RpmPerRawVelocity : LREAL := 0; (* TODO_VERIFY_INOVANCE_MANUAL *)
+ CstMode : SINT := 10; (* standard baseline only, verify actual drive *)
+ InstallationSign : LREAL := -1;
+ RotationSign : LREAL := 1;
+ MaxTorqueNm : LREAL := 0.2;
+ ContinuousTorqueNm : LREAL := 0.2;
+ PeakSeconds : LREAL := 2;
+ PeakCooldownSeconds : LREAL := 30;
+ MaxSpeedRpm : LREAL := 500;
+ MinLoadSpeedRpm : LREAL := 50;
+ MaxPowerW : LREAL := 15;
+ MotorWarnC : LREAL := 60;
+ MotorTripC : LREAL := 70;
+ BrakeTripC : LREAL := 80;
+ DcBusTripV : LREAL := 0; (* missing vendor threshold prevents commissioning *)
+ MaxRampNmPerSec : LREAL := 0.2;
+ StopRampNmPerSec : LREAL := 0.2;
+ ZeroTorqueNm : LREAL := 0.01;
+ StopTimeoutSeconds : LREAL := 5;
+ HeartbeatTimeoutSeconds : LREAL := 0.5;
+ OverTorqueDelaySeconds : LREAL := 0.05;
+ OverTorqueMarginNm : LREAL := 0.05;
+ MapCount : INT := 3;
+ MapRpm : ARRAY[1..16] OF LREAL := [0,100,500];
+ MapTorque : ARRAY[1..16] OF LREAL := [0,0.05,0.15];
+ EnvelopeCount : INT := 2;
+ EnvelopeRpm : ARRAY[1..16] OF LREAL := [0,500];
+ EnvelopeTorque : ARRAY[1..16] OF LREAL := [0.2,0.2];
+END_VAR]]></Declaration></GVL></TcPlcObject>

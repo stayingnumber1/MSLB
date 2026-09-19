@@ -1,0 +1,7 @@
+{
+  "adapter": "",
+  "dedicatedAdapterConfirmed": false,
+  "driveModel": "SV660N",
+  "stage": "PRE-OP CoE diagnostics only",
+  "notes": "Set the dedicated wired adapter NPF name after enumeration. Scanning initializes the bus; never share another master's active bus."
+}

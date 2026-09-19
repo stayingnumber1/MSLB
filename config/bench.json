@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "drive": {
+    "name": "SV660N / screenshot SV635N - TODO_VERIFY_INOVANCE_MANUAL",
+    "cstMode": 10,
+    "installationSign": -1,
+    "expectedRotationSign": 1,
+    "rawTorquePerNm": null,
+    "rpmPerRawVelocity": null,
+    "modelVerified": false,
+    "pdoVerified": false,
+    "directionVerified": false,
+    "regenerationVerified": false,
+    "hardwareSafetyVerified": false,
+    "allowHardwareWrites": false
+  },
+  "limits": {
+    "maxTorqueNm": 0.2,
+    "continuousTorqueNm": 0.2,
+    "peakSeconds": 2,
+    "peakCooldownSeconds": 30,
+    "maxSpeedRpm": 500,
+    "minLoadSpeedRpm": 50,
+    "maxPowerW": 15,
+    "motorWarnC": 60,
+    "motorTripC": 70,
+    "brakeTripC": 80,
+    "dcBusTripV": null,
+    "maxRampNmPerSec": 0.2,
+    "stopRampNmPerSec": 0.2,
+    "zeroTorqueNm": 0.01,
+    "stopTimeoutSeconds": 5,
+    "heartbeatTimeoutMs": 500,
+    "snapshotTimeoutMs": 250,
+    "overTorqueDelayMs": 50,
+    "overTorqueMarginNm": 0.05,
+    "torqueEnvelope": [
+      {
+        "rpm": 0,
+        "torqueNm": 0.2
+      },
+      {
+        "rpm": 500,
+        "torqueNm": 0.2
+      }
+    ]
+  },
+  "ads": {
+    "amsNetId": "127.0.0.1.1.1",
+    "port": 851,
+    "commandSymbol": "GVL_Hmi.Command",
+    "commitSymbol": "GVL_Hmi.CommandCommit",
+    "statusSymbol": "GVL_Hmi.Status",
+    "timeoutMs": 200,
+    "reconnectMs": 2000
+  },
+  "torqueMap": [
+    {
+      "rpm": 0,
+      "torqueNm": 0
+    },
+    {
+      "rpm": 100,
+      "torqueNm": 0.05
+    },
+    {
+      "rpm": 500,
+      "torqueNm": 0.15
+    }
+  ],
+  "dataDirectory": "artifacts/sessions"
+}
