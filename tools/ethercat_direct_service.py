@@ -172,8 +172,11 @@ class DirectService:
         self.target_torque_raw = 0.0
         self.output_torque_raw = 0.0
         self.torque_ramp_raw_per_s = 100.0
-        self.mode = 9
-        self.last_torque_command = time.monotonic()
+        # The SV630N vendor operating mode (0x2002:01) must match the CiA402
+        # mode before entering OP.  Changing only 0x6060 through RxPDO after
+        # OP leaves CST enable stuck in Switch On Disabled on this drive.
+        self.mode = 10 if allow_external_load else 9
+        self.last_torque_command = time.perf_counter()
         self.ramp_rpm_per_s = 100.0
         self.disable_after_stop = False
         self.enable_requested = False
@@ -237,8 +240,10 @@ class DirectService:
         # Mailbox SDO reads can block the 4 ms PDO pump on this drive. Capture
         # auxiliary monitors before OP; motion feedback itself is always TxPDO.
         self._read_monitor(time.monotonic())
+        # SV630N 0x2002:01 selects the EtherCAT command source; it is not the
+        # CiA402 mode number and only accepts the commissioned value 9 here.
         self.slave.sdo_write(0x2002, 1, struct.pack("<H", 9))
-        self.slave.sdo_write(0x6060, 0, struct.pack("<b", 9))
+        self.slave.sdo_write(0x6060, 0, struct.pack("<b", self.mode))
         self.slave.config_func = lambda position: assign_service_pdo(self.master.slaves[position])
         # Keep RxPDO and TxPDO in separate logical-map regions.  The service
         # PDOs are asymmetric (19-byte Rx / 29-byte Tx); overlap mapping made
@@ -482,7 +487,7 @@ class DirectService:
             self.mode = 10
             self.enable_requested = True
             self.disable_after_stop = False
-            self.last_torque_command = time.monotonic()
+            self.last_torque_command = time.perf_counter()
         elif kind == "velocity":
             rpm = float(command.get("rpm", 0))
             ramp = float(command.get("ramp_rpm_per_s", 100))
@@ -505,7 +510,7 @@ class DirectService:
                 raise ValueError("CST torque/ramp exceeds protocol limits")
             self.target_torque_raw = target
             self.torque_ramp_raw_per_s = ramp
-            self.last_torque_command = time.monotonic()
+            self.last_torque_command = time.perf_counter()
             if command.get("disable", False):
                 self.target_torque_raw = 0
                 self.disable_after_stop = True
@@ -529,7 +534,7 @@ class DirectService:
                 self.enable_requested = False
                 self.disable_after_stop = True
                 self.reset_original_fault = self.fault_detail or drive_fault_message(error, self.auxiliary_fault)
-                self.reset_deadline = time.monotonic() + 2.0
+                self.reset_deadline = time.perf_counter() + 2.0
                 self._set_output(0x0080, 0)
         elif kind == "shutdown":
             self.target_rpm = 0
@@ -629,6 +634,7 @@ class DirectService:
             self.heartbeat += 1
             emit({"type": "status", "connected": True, "ethercat_online": True,
                   "state": state, "statusword": word, "error_code": error, "mode": mode,
+                  "controlword": self.controlword, "enable_requested": self.enable_requested,
                   "servo_on": state == "operation_enabled", "drive_ready": state not in ("fault", "fault_reaction_active", "not_ready"),
                   "speed_rpm": rpm, "target_rpm": self.output_rpm,
                   "torque_raw": raw_torque, "torque_percent": raw_torque / 10.0,

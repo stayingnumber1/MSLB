@@ -1,36 +1,40 @@
 {
-  "timestamp_utc": "2026-09-19T14:00:40.944472+00:00",
+  "timestamp_utc": "2026-09-27T13:29:04.647117+00:00",
   "action": "adapters",
   "drive_writes": false,
   "ok": true,
   "pysoem_version": "1.1.13",
   "adapters": [
     {
-      "name": "\\Device\\NPF_{3B5EA108-F2EA-45ED-BD9C-90FEDF439E5B}",
+      "name": "\\Device\\NPF_{7454F879-8D7B-4DE9-88F2-38CA3E4B05C6}",
       "description": "WAN Miniport (Network Monitor)"
     },
     {
-      "name": "\\Device\\NPF_{C9B2B193-2C6C-46F9-9F51-193E35B88B33}",
+      "name": "\\Device\\NPF_{D0852FBD-021B-490D-AA65-4041440219F3}",
       "description": "WAN Miniport (IPv6)"
     },
     {
-      "name": "\\Device\\NPF_{336F4095-8AF0-4F91-8D17-8AB3936DD243}",
+      "name": "\\Device\\NPF_{99F11880-2515-412A-A818-5D6CB48F3FD3}",
       "description": "WAN Miniport (IP)"
     },
     {
-      "name": "\\Device\\NPF_{39942674-2E42-449A-ADF5-C306A3BBA1DD}",
-      "description": "Intel(R) Centrino(R) Advanced-N 6205 #2"
+      "name": "\\Device\\NPF_{B475EA33-8962-4289-91F1-645CCB9EE12A}",
+      "description": "Bluetooth Device (Personal Area Network)"
     },
     {
-      "name": "\\Device\\NPF_{9F9BCCE8-6557-49AC-B6F9-6C5BB3C2B158}",
-      "description": "Realtek PCIe GbE Family Controller #3"
+      "name": "\\Device\\NPF_{43D2D244-DD77-48DA-9F21-3B97C6C93E4A}",
+      "description": "Intel(R) Dual Band Wireless-AC 7260"
     },
     {
-      "name": "\\Device\\NPF_{6E1BE18C-3EA2-42CE-9C05-21B297074953}",
+      "name": "\\Device\\NPF_{ABE07EA1-A4FA-44F7-832A-B153DE3BE443}",
+      "description": "Realtek PCIe GbE Family Controller #7"
+    },
+    {
+      "name": "\\Device\\NPF_{6C4774C0-95C0-4270-ABCA-E10A61059DAD}",
       "description": "Microsoft Wi-Fi Direct Virtual Adapter #8"
     },
     {
-      "name": "\\Device\\NPF_{BE2E4A91-EAC8-46FA-99D5-CEEF02D7F434}",
+      "name": "\\Device\\NPF_{BA293770-3EAF-4F53-8375-5B508EF93A1A}",
       "description": "Microsoft Wi-Fi Direct Virtual Adapter #7"
     },
     {
@@ -38,8 +42,8 @@
       "description": "Adapter for loopback traffic capture"
     },
     {
-      "name": "\\Device\\NPF_{A3A81456-1F4F-4B95-B8BE-AC3790875114}",
-      "description": "Realtek PCIe GbE Family Controller"
+      "name": "\\Device\\NPF_{CA868825-733B-4BA5-BCA4-632C4AD65BAB}",
+      "description": "Realtek PCIe GbE Family Controller #5"
     }
   ],
   "note": "Enumeration only; no device connection or EtherCAT frames."

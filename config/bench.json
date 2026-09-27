@@ -64,7 +64,7 @@
             },
     "torqueSensor":  {
                          "enabled":  true,
-                         "portName":  "COM3",
+                         "portName":  "COM7",
                          "baudRate":  19200,
                          "dataBits":  8,
                          "parity":  "None",

@@ -127,6 +127,12 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
             catch (Exception ex)
             {
                 Trace("vesc_port_open_failed", $"port={portName}; baud={baudRate}; dtr={dtrEnable}; ports={string.Join(',', AvailableDutPorts)}; error={ex}");
+                // Some STM32 USB CDC drivers reject SetCommState while DTR/RTS
+                // are both low (ERROR_OPERATION_ABORTED). Retry only that
+                // specific DTR-off failure with the existing DTR-on attempt.
+                if (!dtrEnable && ex is OperationCanceledException)
+                    throw new ProbeFailureException(
+                        $"串口 {portName} 的 USB CDC 驱动要求 DTR/RTS 开启，改用 DTR=on 重试。", ex);
                 throw new IOException($"串口 {portName} 打开失败：{ex.Message}。请确认端口未被 VESC Tool 或其他程序占用，且驱动已安装。", ex);
             }
             candidate.DiscardInBuffer();
