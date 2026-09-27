@@ -11,11 +11,13 @@ public sealed class MockRealtimeBridge(BenchConfig config) : IRealtimeBridge
     private CancellationTokenSource? _cts;
     private Task? _task;
     private BenchSnapshot _latest = new();
-    private double _rpm = 300, _actual, _temperature = 25;
+    private double _rpm, _actual, _temperature = 25;
+    private double? _performanceNoLoadRpm;
     private Interlock _injection;
     public bool IsSimulation => true;
     public bool CanWrite => true;
-    public void SetSpeed(double rpm) { if (!double.IsFinite(rpm)) throw new ArgumentException("转速无效"); lock (_gate) _rpm = rpm; }
+    public void SetSpeed(double rpm) { if (!double.IsFinite(rpm)) throw new ArgumentException("转速无效"); lock (_gate) { _performanceNoLoadRpm = null; _rpm = rpm; } }
+    public void SetPerformanceDrive(double noLoadRpm) { if (!double.IsFinite(noLoadRpm) || noLoadRpm <= 0) throw new ArgumentException("空载转速无效"); lock (_gate) { _performanceNoLoadRpm = noLoadRpm; _rpm = noLoadRpm; } }
     public void Inject(Interlock mask) { lock (_gate) _injection = mask; }
     public void SetTemperature(double temp) { lock (_gate) _temperature = temp; }
     public Task ConnectAsync(CancellationToken ct)
@@ -37,10 +39,16 @@ public sealed class MockRealtimeBridge(BenchConfig config) : IRealtimeBridge
                     lock (_gate)
                     {
                         _actual += (_model.Target - _actual) * (1 - Math.Exp(-dt / .035));
+                        if (_performanceNoLoadRpm is { } noLoad)
+                            _rpm = Math.Max(0, noLoad - Math.Abs(_actual) * noLoad / Math.Max(.1, config.AutoTest.TorqueRangeMaxNm));
                         _latest = _model.Tick(dt, _rpm, _actual, _temperature, 27, 310, _injection);
                         var p = Math.Abs(_actual * _rpm * Math.PI / 30);
                         _latest = _latest with { ExternalHealthy = true, ExternalTorqueNm = _actual, ExternalSpeedRpm = _rpm,
-                            DutBusV = 30, DutCurrentA = (p / .88 + 2) / 30, ServoCurrentA = Math.Abs(_actual) * 1.5 };
+                            DutBusV = 30, DutCurrentA = (p / .88 + 2) / 30, DutPhaseCurrentA = (p / .88 + 2) / 30 * 1.15,
+                            DutDutyCyclePct = 48, DutMotorTempC = _temperature, DutSpeedRpm = _rpm,
+                            ServoCurrentA = Math.Abs(_actual) * 1.5, ServoPhaseCurrentA = Math.Abs(_actual) * 1.5,
+                            ServoBusCurrentA = (p + 4) / 310, ServoDutyCyclePct = 36, ServoEfficiencyPct = 86,
+                            ServoLoadPct = Math.Abs(_actual) / 2.39 * 100, ServoFeedbackPowerW = p * .86 };
                     }
                 }
             }

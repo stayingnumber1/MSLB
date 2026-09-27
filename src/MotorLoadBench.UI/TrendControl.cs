@@ -23,12 +23,16 @@ public sealed class TrendControl : FrameworkElement
         if (rows.Count < 2) return;
         var start = rows[0].Timestamp;
         var span = Math.Max(.01, (end - start).TotalSeconds);
-        DrawTrack("RPM", rows.Select(s => s.SpeedRpm).ToArray(), Colors.DeepSkyBlue, 0);
-        DrawTrack("Nm: actual / target", rows.Select(s => s.ActualTorqueNm).ToArray(), Colors.MediumAquamarine, 1, rows.Select(s => s.TargetTorqueNm).ToArray());
-        DrawTrack("W (servo estimate)", rows.Select(s => s.MechanicalPowerW).ToArray(), Colors.Goldenrod, 2);
+        DrawTrack("DUT RPM", rows.Select(s => s.DutSpeedRpm ?? s.ExternalSpeedRpm ?? s.SpeedRpm).ToArray(), Colors.DeepSkyBlue, 0);
+        DrawTrack("Torque N·m: DYN measured / servo target",
+            rows.Select(s => s.ExternalHealthy && s.ExternalTorqueNm is { } torque ? torque : double.NaN).ToArray(),
+            Colors.MediumAquamarine, 1, rows.Select(s => s.TargetTorqueNm).ToArray());
+        DrawTrack("Power W: Pin / Pout", rows.Select(s => s.InputPowerW ?? 0).ToArray(), Colors.MediumPurple, 2,
+            rows.Select(s => s.MeasuredPowerW ?? 0).ToArray());
         void DrawTrack(string label, double[] values, Color color, int track, double[]? second = null)
         {
-            var all = second == null ? values : values.Concat(second).ToArray();
+            var all = (second == null ? values : values.Concat(second)).Where(double.IsFinite).ToArray();
+            if (all.Length == 0) return;
             var min = Math.Min(0, all.Min()); var max = Math.Max(.01, all.Max()); var range = Math.Max(.01, max - min);
             var height = ActualHeight / 3; var top = track * height;
             var text = new FormattedText(label + $"  [{min:F2}, {max:F2}]", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
@@ -41,11 +45,14 @@ public sealed class TrendControl : FrameworkElement
                 var geometry = new StreamGeometry();
                 using (var ctx = geometry.Open())
                 {
+                    var figureOpen = false;
                     for (int i = 0; i < rows.Count; i++)
                     {
+                        if (!double.IsFinite(array[i])) { figureOpen = false; continue; }
                         var p = new Point(8 + (rows[i].Timestamp - start).TotalSeconds / span * (ActualWidth - 16),
                             top + 22 + (1 - (array[i] - min) / range) * (height - 30));
-                        if (i == 0) ctx.BeginFigure(p, false, false); else ctx.LineTo(p, true, false);
+                        if (!figureOpen) { ctx.BeginFigure(p, false, false); figureOpen = true; }
+                        else ctx.LineTo(p, true, false);
                     }
                 }
                 geometry.Freeze(); dc.DrawGeometry(null, new Pen(brush, 1.4), geometry);

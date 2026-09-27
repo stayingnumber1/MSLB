@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF></PropertyGroup>
   <ItemGroup><ProjectReference Include="../MotorLoadBench.Infrastructure/MotorLoadBench.Infrastructure.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="System.IO.Ports" Version="8.0.0" /></ItemGroup>
   <ItemGroup><Content Include="../../config/**/*"><Link>config/%(RecursiveDir)%(Filename)%(Extension)</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content></ItemGroup>
 </Project>

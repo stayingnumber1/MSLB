@@ -1,0 +1,7 @@
+{
+  "timestamp_utc": "2026-09-19T10:54:39.653929+00:00",
+  "action": "prove-direction",
+  "drive_writes": true,
+  "ok": false,
+  "error": "TimeoutError: CSV mode echo did not reach 9; last={'error_code': 0, 'statusword': 0, 'cia402_state': 'not_ready', 'position_raw': 0, 'torque_raw': 0, 'mode_display': 0, 'following_error': 0, 'touch_probe': 0, 'touch_edge_1': 0, 'touch_edge_2': 0, 'velocity_raw': 0, 'wkc': 2}"
+}

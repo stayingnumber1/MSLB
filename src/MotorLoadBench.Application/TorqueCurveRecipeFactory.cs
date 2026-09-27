@@ -16,6 +16,29 @@ public record TorqueCurvePlan(
 
 public static class TorqueCurveRecipeFactory
 {
+    public static Recipe CreateStandardPerformance(BenchConfig config)
+    {
+        var a = config.AutoTest;
+        var points = Steps(a.TorqueStepNm, a.TorqueRangeMaxNm, a.TorqueStepNm)
+            .Select((torque, index) => new TestPoint
+            {
+                Id = $"T{index + 1:00}_{torque:0.00}".Replace('.', '_'),
+                // Legacy recipe validation field only. The automatic test commands the
+                // 3000 RPM start condition once, then holds the captured duty cycle.
+                Rpm = Math.Min(1000, a.SimulationNoLoadRpm),
+                SpeedWindowRpm = 100,
+                TorqueNm = torque,
+                TorqueToleranceNm = Math.Max(.02, torque * .02),
+                RampNmPerSec = a.TorqueRampRateNmPerSec,
+                StableSeconds = a.StableHoldSeconds,
+                SampleSeconds = a.PointSampleWindowSeconds,
+                MaxDurationSeconds = a.StableTimeoutSeconds + a.PointSampleWindowSeconds + 3,
+                TemperatureLimitC = config.Limits.MotorTripC
+            }).ToList();
+        var recipe = new Recipe { Name = "P1 标准性能曲线", Points = points };
+        BenchConfig.ValidateRecipe(recipe, config.Limits);
+        return recipe;
+    }
     public static Recipe Create(TorqueCurvePlan plan, BenchConfig config)
     {
         config.Validate();

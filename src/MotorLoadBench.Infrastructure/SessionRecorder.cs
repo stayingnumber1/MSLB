@@ -25,7 +25,7 @@ public sealed class SessionRecorder : ISessionRecorder
         Directory.CreateDirectory(DirectoryPath);
         File.WriteAllText(Path.Combine(DirectoryPath, "session.json"), JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, startedUtc = _start, simulation, configHash, config,
+            schemaVersion = 4, startedUtc = _start, simulation, configHash, config,
             softwareVersion = typeof(SessionRecorder).Assembly.GetName().Version?.ToString(),
             assemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(SessionRecorder).Assembly.Location))),
             gitCommit = Environment.GetEnvironmentVariable("MOTOR_BENCH_GIT_COMMIT") ?? "unversioned",
@@ -37,11 +37,13 @@ public sealed class SessionRecorder : ISessionRecorder
             try
             {
                 await using var stream = new StreamWriter(Path.Combine(DirectoryPath, "samples.csv"), false, new UTF8Encoding(true));
-                await stream.WriteLineAsync("timestamp_utc,elapsed_ms,test_point_id,machine_state,target_torque_nm,actual_torque_nm,speed_rpm,mechanical_power_w,dc_bus_v,servo_current_a,motor_temp_c,brake_resistor_temp_c,dut_bus_v,dut_bus_current_a,dut_input_power_w,external_torque_nm,external_speed_rpm,measured_power_w,efficiency_pct,error_code,interlock_mask,plc_heartbeat");
+                await using var raw = new StreamWriter(Path.Combine(DirectoryPath, "raw.csv"), false, new UTF8Encoding(true));
+                const string header = "timestamp_utc,elapsed_ms,test_point_id,machine_state,target_torque_nm,actual_torque_nm,speed_rpm,mechanical_power_w,dc_bus_v,servo_current_a,motor_temp_c,brake_resistor_temp_c,dut_bus_v,dut_bus_current_a,dut_input_power_w,external_torque_nm,external_speed_rpm,measured_power_w,efficiency_pct,error_code,interlock_mask,plc_heartbeat,servo_bus_current_a,servo_phase_current_a,servo_duty_pct,servo_input_power_w,servo_output_power_w,servo_efficiency_pct,dut_iq_command_a,dut_phase_current_a,dut_duty_pct,dut_motor_temp_c,dut_controller_temp_c,dut_fault_code,dut_speed_rpm,dut_output_power_w,servo_load_pct,servo_feedback_power_w";
+                await stream.WriteLineAsync(header); await raw.WriteLineAsync(header);
                 int count = 0;
                 await foreach (var line in _channel.Reader.ReadAllAsync())
-                { await stream.WriteLineAsync(line); if (++count % 50 == 0) await stream.FlushAsync(); }
-                await stream.FlushAsync();
+                { await stream.WriteLineAsync(line); await raw.WriteLineAsync(line); if (++count % 50 == 0) { await stream.FlushAsync(); await raw.FlushAsync(); } }
+                await stream.FlushAsync(); await raw.FlushAsync();
             }
             catch (Exception ex) { _error = ex; }
         });
@@ -57,7 +59,9 @@ public sealed class SessionRecorder : ISessionRecorder
         var line = string.Join(',', s.Timestamp.ToString("O"), N((s.Timestamp - _start).TotalMilliseconds),
             '"' + pointId.Replace("\"", "\"\"") + '"', s.State, N(s.TargetTorqueNm), N(s.ActualTorqueNm), N(s.SpeedRpm), N(s.MechanicalPowerW),
             N(s.DcBusV), N(s.ServoCurrentA), N(s.MotorTempC), N(s.BrakeTempC), N(s.DutBusV), N(s.DutCurrentA), N(s.InputPowerW),
-            N(s.ExternalTorqueNm), N(s.ExternalSpeedRpm), N(s.MeasuredPowerW), N(s.EfficiencyPct), s.ErrorCode, (uint)s.Interlocks, s.PlcHeartbeat);
+            N(s.ExternalTorqueNm), N(s.ExternalSpeedRpm), N(s.MeasuredPowerW), N(s.EfficiencyPct), s.ErrorCode, (uint)s.Interlocks, s.PlcHeartbeat,
+            N(s.ServoBusCurrentA), N(s.ServoPhaseCurrentA), N(s.ServoDutyCyclePct), N(s.ServoInputPowerW), N(s.ServoOutputPowerW), N(s.ServoEfficiencyPct),
+            N(s.DutIqCommandA), N(s.DutPhaseCurrentA), N(s.DutDutyCyclePct), N(s.DutMotorTempC), N(s.DutControllerTempC), s.DutFaultCode?.ToString(CultureInfo.InvariantCulture) ?? "", N(s.DutSpeedRpm), N(s.MeasuredPowerW), N(s.ServoLoadPct), N(s.ServoFeedbackPowerW));
         if (!_channel.Writer.TryWrite(line)) { _error = new IOException("记录队列已满，禁止丢样后继续运行"); CheckHealth(); }
     }
     public void Event(string code, string message)

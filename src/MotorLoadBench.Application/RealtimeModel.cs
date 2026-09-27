@@ -58,7 +58,8 @@ public sealed class RealtimeModel(BenchConfig config)
         else if (_peakTime > 0) { _cooldown = l.PeakCooldownSeconds; _peakTime = 0; }
         _cooldown = Math.Max(0, _cooldown - dt);
         // Electrical/mechanical severe trips do not ramp through unsafe conditions.
-        bool immediate = (Fault & ~Interlock.Heartbeat) != Interlock.None || Math.Abs(rpm) < l.MinLoadSpeedRpm;
+        bool immediate = (Fault & ~Interlock.Heartbeat) != Interlock.None ||
+            (_command.Mode != LoadMode.ConstantTorque && Math.Abs(rpm) < l.MinLoadSpeedRpm);
         if (immediate) Target = 0;
         else Target = LoadMath.Slew(Target, demand, _stop ? l.StopRampNmPerSec : Math.Min(_command.TorqueRampNmPerSec, l.MaxRampNmPerSec), dt);
         if (_disable && Math.Abs(Target) <= l.ZeroTorqueNm && Math.Abs(measuredTorque) <= l.ZeroTorqueNm) ServoOn = false;

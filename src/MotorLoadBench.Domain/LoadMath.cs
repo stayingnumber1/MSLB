@@ -21,10 +21,14 @@ public static class LoadMath
         var l = config.Limits;
         if (!double.IsFinite(rpm) || !double.IsFinite(temp) || !double.IsFinite(c.TargetTorqueNm) ||
             !double.IsFinite(c.TargetPowerW) || c.TargetTorqueNm < 0 || c.TargetPowerW < 0) throw new ArgumentException("非法工程量");
-        // Passive-load policy: never create motion at standstill or follow an unexpected reversal.
-        if (Math.Abs(rpm) < l.MinLoadSpeedRpm || Math.Sign(rpm) != config.Drive.ExpectedRotationSign) return 0;
+        // Constant torque can preload at standstill using the configured direction.
+        // Power and torque-map loads retain their minimum-speed guard.
+        var allowsStandstill = c.Mode is LoadMode.ConstantTorque or LoadMode.LoadedStart;
+        if (!allowsStandstill && Math.Abs(rpm) < l.MinLoadSpeedRpm) return 0;
+        if (Math.Abs(rpm) > 1e-6 && Math.Sign(rpm) != config.Drive.ExpectedRotationSign) return 0;
         var cap = Math.Min(l.MaxTorqueNm, Interpolate(l.TorqueEnvelope, rpm));
-        cap = Math.Min(cap, l.MaxPowerW / (Math.Abs(rpm) * Math.PI / 30));
+        if (Math.Abs(rpm) > 1e-6)
+            cap = Math.Min(cap, l.MaxPowerW / (Math.Abs(rpm) * Math.PI / 30));
         if (temp > l.MotorWarnC) cap *= Math.Clamp((l.MotorTripC - temp) / (l.MotorTripC - l.MotorWarnC), 0, 1);
         var magnitude = c.Mode switch
         {

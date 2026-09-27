@@ -1,6 +1,56 @@
+# Local toolchains and application caches
 .tools/
+.firecrawl/
+
+# .NET build and IDE output
 **/bin/
 **/obj/
 .vs/
-artifacts/
-.firecrawl/
+.idea/
+.vscode/
+TestResults/
+*.user
+*.suo
+*.rsuser
+*.userosscache
+*.sln.docstates
+
+# Rebuildable published applications
+artifacts/app*/
+artifacts/build_diagnostic.txt
+artifacts/diagnostics/vesc_link.jsonl
+
+# Large raw test sessions stay on the test machine. Keep the small session
+# summary at artifacts/sessions/motor_comparison.csv available to Git.
+artifacts/sessions/*/
+artifacts/test-sessions/
+artifacts/ui-smoke/
+tmp/
+
+# Python generated files
+**/__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Logs and transient process files
+*.log
+*.tmp
+*.temp
+*.pid
+*.stackdump
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

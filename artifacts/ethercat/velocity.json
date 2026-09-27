@@ -1,0 +1,7 @@
+{
+  "timestamp_utc": "2026-09-19T10:37:16.417622+00:00",
+  "action": "run",
+  "drive_writes": false,
+  "ok": false,
+  "error": "PermissionError: hardware write lock: set only after commissioning: directionVerified, regenerationVerified, hardwareSafetyVerified, allowHardwareWrites"
+}

@@ -1,9 +1,10 @@
 namespace MotorLoadBench.Domain;
 
 public enum BenchState { Disconnected, DriveReady, ServoOnIdle, RampUp, Running, RampDown, Fault }
-public enum LoadMode { ConstantTorque, ConstantPower, TorqueMap }
+public enum LoadMode { ConstantTorque, ConstantPower, TorqueMap, LoadedStart }
 public enum TorqueSource { ServoEstimated, ExternalSensor }
 public enum OnFail { Abort, Skip, RetryOnce }
+public enum ControlOwner { Manual, AutoTest, Safety }
 [Flags] public enum Interlock : uint { None = 0, Emergency = 1, Guard = 2, Regeneration = 4, EtherCat = 8, Heartbeat = 16, Overspeed = 32, Overtemp = 64, Overvoltage = 128, DriveFault = 256, Direction = 512, Invalid = 1024, OverTorque = 2048, PeakTimeout = 4096 }
 public record BenchCommand(bool EnableRequest = false, bool DisableRequest = false, bool ResetFault = false,
     double TargetTorqueNm = 0, double TorqueRampNmPerSec = .1, uint Heartbeat = 0,
@@ -23,18 +24,45 @@ public record BenchSnapshot
     public double? MotorTempC { get; init; }
     public double? BrakeTempC { get; init; }
     public double? ServoCurrentA { get; init; }
+    public double? ServoBusCurrentA { get; init; }
+    public double? ServoPhaseCurrentA { get; init; }
+    public double? ServoDutyCyclePct { get; init; }
+    public double? ServoEfficiencyPct { get; init; }
+    public double? ServoLoadPct { get; init; }
+    public double? ServoFeedbackPowerW { get; init; }
     public double? ExternalTorqueNm { get; init; }
     public double? ExternalSpeedRpm { get; init; }
     public double? DutBusV { get; init; }
     public double? DutCurrentA { get; init; }
+    public double? DutPhaseCurrentA { get; init; }
+    public double? DutIqCommandA { get; init; }
+    public double? DutDutyCyclePct { get; init; }
+    public double? DutMotorTempC { get; init; }
+    public double? DutControllerTempC { get; init; }
+    public byte? DutFaultCode { get; init; }
+    public double? DutSpeedRpm { get; init; }
     public bool ExternalHealthy { get; init; }
     public uint ErrorCode { get; init; }
+    public uint? AuxiliaryFaultCode { get; init; }
+    public string? DriveFaultDetail { get; init; }
     public Interlock Interlocks { get; init; }
     public uint PlcHeartbeat { get; init; }
     public double MechanicalPowerW => Math.Abs(ActualTorqueNm * SpeedRpm * Math.PI / 30);
-    public double? InputPowerW => DutBusV is { } v && DutCurrentA is { } i && double.IsFinite(v) && double.IsFinite(i) && v > 0 && i > 0 ? v * i : null;
-    public double? MeasuredPowerW => ExternalHealthy && ExternalTorqueNm is { } t && double.IsFinite(t) && ExternalSpeedRpm is { } r && double.IsFinite(r) ? Math.Abs(t * r * Math.PI / 30) : null;
-    public double? EfficiencyPct => InputPowerW is > 1e-6 && MeasuredPowerW is { } p ? p / InputPowerW.Value * 100 : null;
+    // DUT motor efficiency uses DC-bus electrical input and the independent
+    // DYN-200 shaft measurement. VESC phase current and estimated servo torque
+    // must never be substituted into this calculation.
+    public double? DutElectricalInputPowerW => DutBusV is { } v && DutCurrentA is { } i &&
+        double.IsFinite(v) && double.IsFinite(i) && v > 0 && i > 0 ? v * i : null;
+    public double? DutMechanicalOutputPowerW => ExternalHealthy && ExternalTorqueNm is { } t &&
+        double.IsFinite(t) && DutSpeedRpm is { } r && double.IsFinite(r)
+            ? Math.Abs(t * r * Math.PI / 30) : null;
+    public double? DutMotorEfficiencyPct => DutElectricalInputPowerW is > 1e-6 && DutMechanicalOutputPowerW is { } p
+        ? p / DutElectricalInputPowerW.Value * 100 : null;
+    public double? InputPowerW => DutElectricalInputPowerW;
+    public double? MeasuredPowerW => DutMechanicalOutputPowerW;
+    public double? EfficiencyPct => DutMotorEfficiencyPct;
+    public double? ServoInputPowerW => DcBusV is { } v && ServoBusCurrentA is { } i && double.IsFinite(v) && double.IsFinite(i) ? Math.Abs(v * i) : null;
+    public double? ServoOutputPowerW => MeasuredPowerW;
 }
 public record MapPoint(double Rpm, double TorqueNm);
 public record TestPoint
@@ -69,4 +97,9 @@ public record Statistics(int Count, double Mean, double Rms, double Min, double 
     }
 }
 public record PointResult(string PointId, int Attempt, string Result, string? Reason, Statistics? Torque,
-    Statistics? Speed, Statistics? MechanicalPower, string RawDataPath, Statistics? Efficiency = null, TorqueSource Source = TorqueSource.ServoEstimated);
+    Statistics? Speed, Statistics? MechanicalPower, string RawDataPath, Statistics? Efficiency = null,
+    TorqueSource Source = TorqueSource.ServoEstimated, Statistics? DcBusCurrent = null,
+    Statistics? IqCommand = null, Statistics? IqActual = null, Statistics? Vbus = null,
+    Statistics? InputPower = null, Statistics? Duty = null, Statistics? Temperature = null,
+    Statistics? ServoTargetTorque = null, Statistics? ServoActualTorque = null,
+    Statistics? ControllerTemperature = null, byte? DutFaultCode = null);

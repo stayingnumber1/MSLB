@@ -1,0 +1,9 @@
+{
+  "timestamp_utc": "2026-09-20T03:18:11.108901+00:00",
+  "action": "scan",
+  "drive_writes": false,
+  "ok": false,
+  "pysoem_version": "1.1.13",
+  "error": "ConnectionError: No EtherCAT slave found: check dedicated NIC, cable and drive EtherCAT IN",
+  "hint": "Windows requires a compatible packet capture driver and a dedicated wired NIC. USB commissioning is a different interface."
+}

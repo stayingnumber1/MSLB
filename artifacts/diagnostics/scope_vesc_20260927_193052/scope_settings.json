@@ -1,0 +1,26 @@
+{
+  "*IDN?": "Siglent Technologies,SDS3104X HD,SDS3HA0D800703,4.8.9.1.0.3.9",
+  "C4:TRA?": "C4:TRA ON",
+  "C4:VDIV?": "C4:VDIV 2.00E-01V",
+  "C4:OFST?": "C4:OFST 3.29E+00V",
+  "C4:CPL?": "C4:CPL D1M",
+  "C4:BWL?": "C4:BWL OFF",
+  "TDIV?": "1.00E+00S",
+  "SARA?": "SARA 1.00E+05Sa/s",
+  "MEMORY_SIZE?": "MSIZ 1M",
+  "TRSE?": "TRSE EDGE,SR,C4,HT,OFF",
+  "C4:TRLV?": "C4:TRLV 3.00E+00V",
+  "C4:TRSL?": "C4:TRSL NEGative",
+  "armedUtc": "2026-09-27T11:30:53.149364Z",
+  "configured": {
+    "C4:VDIV?": "C4:VDIV 2.00E-01V",
+    "C4:OFST?": "C4:OFST -3.29E+00V",
+    "TDIV?": "1.00E+00S",
+    "SARA?": "SARA 1.00E+05Sa/s",
+    "MEMORY_SIZE?": "MSIZ 1M",
+    "TRSE?": "TRSE EDGE,SR,C4,HT,OFF",
+    "C4:TRLV?": "C4:TRLV 3.00E+00V",
+    "C4:TRSL?": "C4:TRSL NEGative",
+    "SAST?": "SAST Arm"
+  }
+}

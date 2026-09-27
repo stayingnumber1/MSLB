@@ -1,13 +1,13 @@
 {
   "adapter": "\\Device\\NPF_{9F9BCCE8-6557-49AC-B6F9-6C5BB3C2B158}",
   "dedicatedAdapterConfirmed": true,
-  "driveModel": "SV660N",
+  "driveModel": "SV630N",
   "expectedIdentity": {
-    "name": "InoSV635N",
+    "name": "InoSV630N",
     "vendorId": 1048576,
-    "productCode": 786702,
+    "productCode": 786706,
     "revision": 65536
   },
-  "stage": "PRE-OP CoE diagnostics only",
-  "notes": "Mapped from Windows adapter 以太网 3 (Realtek PCIe GbE, MAC 00-E0-B4-70-35-6B). Confirm this cable goes only to the stopped SV660N bus before setting dedicatedAdapterConfirmed=true."
+  "stage": "SV630N identity and fixed PDO layouts read-verified; OP/SYNC and motion validation pending on replacement drive",
+  "notes": "Same dedicated adapter; InoSV630N identity read on 2026-09-22. Fixed PDO 0x1702/0x1B04 match service layout. Motion scaling and limits require revalidation for replacement hardware."
 }

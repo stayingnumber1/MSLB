@@ -10,6 +10,27 @@ public interface IRealtimeBridge : IAsyncDisposable
     Task<BenchSnapshot> ReadSnapshotAsync(CancellationToken ct);
     Task WriteCommandAsync(BenchCommand command, CancellationToken ct);
 }
+public enum DutControlMode { DutyCycle, SpeedRpm, MotorCurrentA, PositionDegrees }
+public interface IDutMotorBridge
+{
+    bool CanControlDut { get; }
+    IReadOnlyList<string> AvailableDutPorts { get; }
+    Task ConnectDutAsync(string portName, CancellationToken ct);
+    Task DisconnectDutAsync();
+    Task SetDutAsync(DutControlMode mode, double value, CancellationToken ct);
+    Task StopDutAsync(CancellationToken ct);
+}
+public interface IDirectVelocityBridge
+{
+    bool CanControlVelocity { get; }
+    Task EnableVelocityAsync(CancellationToken ct);
+    Task SetVelocityAsync(double rpm, double rampRpmPerSec, CancellationToken ct);
+    Task StopVelocityAsync(bool disable, CancellationToken ct);
+}
+public interface IExternalTorqueZeroing
+{
+    Task ZeroExternalTorqueAsync(CancellationToken ct);
+}
 public interface ISessionRecorder : IAsyncDisposable
 {
     string DirectoryPath { get; }
@@ -37,7 +58,13 @@ public sealed class SafetyManager(BenchConfig config)
         if (_heartbeat != s.PlcHeartbeat) { _heartbeat = s.PlcHeartbeat; _heartbeatAt = now; }
         if (now - _heartbeatAt > TimeSpan.FromMilliseconds(l.HeartbeatTimeoutMs)) return "PLC心跳停止";
         if (s.Interlocks != Interlock.None || s.ErrorCode != 0 || s.State == BenchState.Fault) return $"联锁/驱动故障：{s.Interlocks} / 0x{s.ErrorCode:X}";
+        if (Math.Abs(s.SpeedRpm) >= l.LoadedStartReverseTripRpm && Math.Sign(s.SpeedRpm) != config.Drive.ExpectedRotationSign)
+            return $"SERVO_REVERSE: {s.SpeedRpm:F1} RPM";
         if (Math.Abs(s.SpeedRpm) > l.MaxSpeedRpm) return "超速";
+        if (s.DutCurrentA is { } busCurrent && Math.Abs(busCurrent) >= l.MaxDutBusCurrentA)
+            return $"DUT 母线电流达到硬限制：{busCurrent:F2} A";
+        if (s.InputPowerW is { } inputPower && inputPower >= l.MaxPowerW)
+            return $"DUT 输入功率达到硬限制：{inputPower:F1} W";
         if (s.MotorTempC >= l.MotorTripC || s.BrakeTempC >= l.BrakeTripC) return "温度超限";
         if (l.DcBusTripV is { } max && s.DcBusV >= max) return "母线过压";
         return null;
