@@ -312,7 +312,8 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
                 if (_telemetryAt != default && telemetryAge > HardTelemetryTimeout && !_hardStaleReported)
                 {
                     _hardStaleReported = true;
-                    Trace("vesc_telemetry_stale", $"port={_port?.PortName}; isOpen={_port?.IsOpen}; ageMs={telemetryAge.TotalMilliseconds:F1}; hardTimeoutMs={HardTelemetryTimeout.TotalMilliseconds:F0}; lastTelemetryUtc={_telemetryAt:O}; lastReadUtc={(_lastReadAt == default ? "none" : _lastReadAt.ToString("O"))}; lastWriteUtc={(_lastWriteAt == default ? "none" : _lastWriteAt.ToString("O"))}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}; bytesToRead={_port?.BytesToRead}");
+                    var staleCode = energizedCommand ? "vesc_telemetry_stale" : "vesc_idle_telemetry_stale";
+                    Trace(staleCode, $"port={_port?.PortName}; isOpen={_port?.IsOpen}; ageMs={telemetryAge.TotalMilliseconds:F1}; hardTimeoutMs={HardTelemetryTimeout.TotalMilliseconds:F0}; lastTelemetryUtc={_telemetryAt:O}; lastReadUtc={(_lastReadAt == default ? "none" : _lastReadAt.ToString("O"))}; lastWriteUtc={(_lastWriteAt == default ? "none" : _lastWriteAt.ToString("O"))}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}; bytesToRead={_port?.BytesToRead}; action={(energizedCommand ? "fail-safe recovery" : "keep port open and continue reading")}");
                 }
                 if (energizedCommand && _telemetryAt != default && telemetryAge > HardTelemetryTimeout)
                     throw new IOException($"VESC 遥测连续超过 {HardTelemetryTimeout.TotalMilliseconds:F0} ms 未更新，已执行零电流停止。");
@@ -363,20 +364,37 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
 
     private async Task TryWriteIdleCommandAsync(byte[] bytes, long generation, CancellationToken ct)
     {
-        try { await WriteActiveAsync(bytes, generation, ct); }
+        var port = _port ?? throw new IOException("VESC/M1 串口未打开。");
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            lock (_gate) if (generation != _commandGeneration || _activeCommand == null) return;
+            WriteOnce(port, bytes);
+        }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && _port?.IsOpen == true)
         {
             Trace("vesc_idle_write_deferred", $"port={_port.PortName}; commandId={(bytes.Length > 2 ? bytes[2] : -1)}; hresult=0x{ex.HResult:X8}; action=keep-link-open");
         }
+        finally { _writeGate.Release(); }
     }
 
     private async Task TryWriteMaintenanceAsync(byte[] bytes, CancellationToken ct, string purpose)
     {
-        try { await WriteAsync(bytes, ct); }
+        var port = _port ?? throw new IOException("VESC/M1 串口未打开。");
+        await _writeGate.WaitAsync(ct);
+        try { WriteOnce(port, bytes); }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && _port?.IsOpen == true)
         {
             Trace("vesc_maintenance_write_deferred", $"port={_port.PortName}; purpose={purpose}; commandId={(bytes.Length > 2 ? bytes[2] : -1)}; hresult=0x{ex.HResult:X8}; action=keep-link-open");
         }
+        finally { _writeGate.Release(); }
+    }
+
+    private void WriteOnce(SerialPort port, byte[] bytes)
+    {
+        port.Write(bytes, 0, bytes.Length);
+        Interlocked.Add(ref _transmittedBytes, bytes.Length);
+        _lastWriteAt = DateTimeOffset.UtcNow;
     }
 
     private void DrainIncoming(List<byte> pending, byte[] buffer)
