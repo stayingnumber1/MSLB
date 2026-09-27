@@ -287,8 +287,9 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
         {
             while (!ct.IsCancellationRequested)
             {
-                var now = DateTimeOffset.UtcNow; byte[]? command; DutControlMode? mode; long generation; VescTelemetry telemetry;
-                lock (_gate) { command = _activeCommand; mode = _activeMode; generation = _commandGeneration; telemetry = _telemetry; }
+                var now = DateTimeOffset.UtcNow; byte[]? command; DutControlMode? mode; double commandValue; long generation; VescTelemetry telemetry;
+                lock (_gate) { command = _activeCommand; mode = _activeMode; commandValue = _activeValue; generation = _commandGeneration; telemetry = _telemetry; }
+                var energizedCommand = IsEnergizedCommand(mode, commandValue);
 
                 // Drain data which arrived while the worker was sleeping or writing before
                 // evaluating freshness. Checking age first can declare a false outage even
@@ -307,18 +308,22 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
                     _hardStaleReported = true;
                     Trace("vesc_telemetry_stale", $"port={_port?.PortName}; isOpen={_port?.IsOpen}; ageMs={telemetryAge.TotalMilliseconds:F1}; hardTimeoutMs={HardTelemetryTimeout.TotalMilliseconds:F0}; lastTelemetryUtc={_telemetryAt:O}; lastReadUtc={(_lastReadAt == default ? "none" : _lastReadAt.ToString("O"))}; lastWriteUtc={(_lastWriteAt == default ? "none" : _lastWriteAt.ToString("O"))}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}; bytesToRead={_port?.BytesToRead}");
                 }
-                if (command != null && _telemetryAt != default && telemetryAge > HardTelemetryTimeout)
+                if (energizedCommand && _telemetryAt != default && telemetryAge > HardTelemetryTimeout)
                     throw new IOException($"VESC 遥测连续超过 {HardTelemetryTimeout.TotalMilliseconds:F0} ms 未更新，已执行零电流停止。");
-                if (command != null && mode == DutControlMode.MotorCurrentA &&
+                if (energizedCommand && mode == DutControlMode.MotorCurrentA &&
                     Math.Abs(telemetry.ElectricalRpm / config.MotorPolePairs) >= config.CurrentModeMaxRpm)
                     throw new IOException($"电流模式达到 {config.CurrentModeMaxRpm:F0} RPM 安全上限，已执行零电流停止。");
-                if (command != null) await WriteActiveAsync(command, generation, ct);
+                if (command != null)
+                {
+                    if (energizedCommand) await WriteActiveAsync(command, generation, ct);
+                    else await TryWriteIdleCommandAsync(command, generation, ct);
+                }
                 if (!_firmwareIdentified && now >= nextIdentity)
                 {
-                    await WriteAsync(VescProtocol.Request(VescProtocol.CommFwVersion), ct);
+                    await TryWriteMaintenanceAsync(VescProtocol.Request(VescProtocol.CommFwVersion), ct, "firmware");
                     nextIdentity = now.AddMilliseconds(150);
                 }
-                if (now >= nextTelemetry) { await WriteAsync(VescProtocol.Request(VescProtocol.CommGetValues), ct); nextTelemetry = now + telemetryPeriod; }
+                if (now >= nextTelemetry) { await TryWriteMaintenanceAsync(VescProtocol.Request(VescProtocol.CommGetValues), ct, "telemetry"); nextTelemetry = now + telemetryPeriod; }
                 var readUntil = now + commandPeriod;
                 // USB-CDC/FTDI 驱动应答延迟最高约 16 ms，数据可能晚于本周期窗口到达；
                 // 只要驱动缓冲仍有数据就持续读出并解析，不再受单周期窗口限制，
@@ -338,6 +343,33 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
             Trace("vesc_worker_failed", $"port={_port?.PortName}; isOpen={_port?.IsOpen}; recognized={recognized}; firmware={_firmwareVersion}; lastTelemetryUtc={(_telemetryAt == default ? "none" : _telemetryAt.ToString("O"))}; receivedBytes={Interlocked.Read(ref _receivedBytes)}; ports={string.Join(',', AvailableDutPorts)}; error={ex}");
             if (recognized)
                 try { for (var i = 0; i < 10; i++) { await WriteAsync(VescProtocol.SetCurrent(0), CancellationToken.None); await Task.Delay(5); } } catch { }
+        }
+    }
+
+    private static bool IsEnergizedCommand(DutControlMode? mode, double value) => mode switch
+    {
+        DutControlMode.PositionDegrees => true,
+        DutControlMode.SpeedRpm => Math.Abs(value) > 0.5,
+        DutControlMode.MotorCurrentA => Math.Abs(value) > 0.001,
+        DutControlMode.DutyCycle => Math.Abs(value) > 0.0001,
+        _ => false
+    };
+
+    private async Task TryWriteIdleCommandAsync(byte[] bytes, long generation, CancellationToken ct)
+    {
+        try { await WriteActiveAsync(bytes, generation, ct); }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && _port?.IsOpen == true)
+        {
+            Trace("vesc_idle_write_deferred", $"port={_port.PortName}; commandId={(bytes.Length > 2 ? bytes[2] : -1)}; hresult=0x{ex.HResult:X8}; action=keep-link-open");
+        }
+    }
+
+    private async Task TryWriteMaintenanceAsync(byte[] bytes, CancellationToken ct, string purpose)
+    {
+        try { await WriteAsync(bytes, ct); }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && _port?.IsOpen == true)
+        {
+            Trace("vesc_maintenance_write_deferred", $"port={_port.PortName}; purpose={purpose}; commandId={(bytes.Length > 2 ? bytes[2] : -1)}; hresult=0x{ex.HResult:X8}; action=keep-link-open");
         }
     }
 
