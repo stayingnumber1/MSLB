@@ -1,6 +1,48 @@
+# Local toolchains and application caches
 .tools/
+.firecrawl/
+
+# .NET build and IDE output
 **/bin/
 **/obj/
 .vs/
+.idea/
+.vscode/
+TestResults/
+*.user
+*.suo
+*.rsuser
+*.userosscache
+*.sln.docstates
+
+# Published applications, test sessions, captures, and diagnostics
 artifacts/
-.firecrawl/
+tmp/
+
+# Python generated files
+**/__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Logs and transient process files
+*.log
+*.tmp
+*.temp
+*.pid
+*.stackdump
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
