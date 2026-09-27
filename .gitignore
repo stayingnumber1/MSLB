@@ -15,8 +15,16 @@ TestResults/
 *.userosscache
 *.sln.docstates
 
-# Published applications, test sessions, captures, and diagnostics
-artifacts/
+# Rebuildable published applications
+artifacts/app*/
+artifacts/build_diagnostic.txt
+artifacts/diagnostics/vesc_link.jsonl
+
+# Large raw test sessions stay on the test machine. Keep the small session
+# summary at artifacts/sessions/motor_comparison.csv available to Git.
+artifacts/sessions/*/
+artifacts/test-sessions/
+artifacts/ui-smoke/
 tmp/
 
 # Python generated files

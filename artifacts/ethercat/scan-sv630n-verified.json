@@ -1,0 +1,462 @@
+{
+  "timestamp_utc": "2026-09-22T06:40:16.969481+00:00",
+  "action": "scan",
+  "drive_writes": false,
+  "ok": true,
+  "pysoem_version": "1.1.13",
+  "slaves": [
+    {
+      "position": 1,
+      "name": "InoSV630N",
+      "vendor_id": 1048576,
+      "product_code": 786706,
+      "revision": 65536,
+      "ethercat_state": 2,
+      "objects": {
+        "statusword": 51,
+        "mode_display": 0,
+        "error_code": 0,
+        "position_raw": 594,
+        "velocity_raw": 4,
+        "torque_raw": 0,
+        "supported_modes": 941,
+        "gear_ratio_numerator": 1,
+        "gear_ratio_denominator": 1,
+        "motor_code": 14101,
+        "serial_motor_code": 11408,
+        "identity_vendor": 1048576,
+        "identity_product": 786706,
+        "identity_revision": 65536,
+        "identity_serial": 0
+      },
+      "errors": {},
+      "cia402_state": "switched_on",
+      "rx_pdo": [
+        {
+          "mapping": "0x1701",
+          "entries": [
+            {
+              "index": "0x6040",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607A",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60B8",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60FE",
+              "subindex": 1,
+              "bits": 32
+            }
+          ]
+        }
+      ],
+      "tx_pdo": [
+        {
+          "mapping": "0x1B01",
+          "entries": [
+            {
+              "index": "0x603F",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6041",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6064",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6077",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60F4",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60B9",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60BA",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60BC",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FD",
+              "subindex": 0,
+              "bits": 32
+            }
+          ]
+        }
+      ],
+      "available_fixed_pdo": {
+        "0x1702": {
+          "mapping": "0x1702",
+          "entries": [
+            {
+              "index": "0x6040",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607A",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FF",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6071",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6060",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B8",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607F",
+              "subindex": 0,
+              "bits": 32
+            }
+          ]
+        },
+        "0x1703": {
+          "mapping": "0x1703",
+          "entries": [
+            {
+              "index": "0x6040",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607A",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FF",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6060",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B8",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60E0",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60E1",
+              "subindex": 0,
+              "bits": 16
+            }
+          ]
+        },
+        "0x1704": {
+          "mapping": "0x1704",
+          "entries": [
+            {
+              "index": "0x6040",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607A",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FF",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6071",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6060",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B8",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607F",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60E0",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60E1",
+              "subindex": 0,
+              "bits": 16
+            }
+          ]
+        },
+        "0x1705": {
+          "mapping": "0x1705",
+          "entries": [
+            {
+              "index": "0x6040",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x607A",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FF",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6060",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B8",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60E0",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60E1",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60B2",
+              "subindex": 0,
+              "bits": 16
+            }
+          ]
+        },
+        "0x1B02": {
+          "mapping": "0x1B02",
+          "entries": [
+            {
+              "index": "0x603F",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6041",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6064",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6077",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6061",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B9",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60BA",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60BC",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FD",
+              "subindex": 0,
+              "bits": 32
+            }
+          ]
+        },
+        "0x1B03": {
+          "mapping": "0x1B03",
+          "entries": [
+            {
+              "index": "0x603F",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6041",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6064",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6077",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60F4",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6061",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60B9",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60BA",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60BC",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60FD",
+              "subindex": 0,
+              "bits": 32
+            }
+          ]
+        },
+        "0x1B04": {
+          "mapping": "0x1B04",
+          "entries": [
+            {
+              "index": "0x603F",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6041",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6064",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x6077",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x6061",
+              "subindex": 0,
+              "bits": 8
+            },
+            {
+              "index": "0x60F4",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60B9",
+              "subindex": 0,
+              "bits": 16
+            },
+            {
+              "index": "0x60BA",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x60BC",
+              "subindex": 0,
+              "bits": 32
+            },
+            {
+              "index": "0x606C",
+              "subindex": 0,
+              "bits": 32
+            }
+          ]
+        }
+      },
+      "device_strings": {
+        "device_name": "SV630_ECAT",
+        "hardware_version": "V1.0",
+        "software_version": "V1.0"
+      },
+      "coe_status_read_ok": true
+    }
+  ],
+  "configured_drive_model": "SV630N",
+  "identity_match": true,
+  "label_name_match": true,
+  "note": "PRE-OP commissioning only. Not an operational CST connection."
+}

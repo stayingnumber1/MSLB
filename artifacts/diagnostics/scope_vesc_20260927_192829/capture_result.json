@@ -1,0 +1,7 @@
+{
+  "failureDetectedUtc": "2026-09-27T11:28:31.426158Z",
+  "failureLog": "{\"timestampUtc\":\"2026-09-27T11:28:31.3762384+00:00\",\"code\":\"vesc_port_open_failed\",\"message\":\"port=COM4; baud=115200; dtr=False; ports=COM1,COM2,COM3,COM4; error=System.UnauthorizedAccessException: Access to the path \\u0027COM4\\u0027 is denied.\\r\\n   at System.IO.Ports.SerialStream..ctor(String portName, Int32 baudRate, Parity parity, Int32 dataBits, StopBits stopBits, Int32 readTimeout, Int32 writeTimeout, Handshake handshake, Boolean dtrEnable, Boolean rtsEnable, Boolean discardNull, Byte parityReplace)\\r\\n   at System.IO.Ports.SerialPort.Open()\\r\\n   at MotorLoadBench.Infrastructure.VescBridge.ProbeAsync(String portName, Int32 baudRate, Boolean dtrEnable, CancellationToken ct) in D:\\\\codex workspace\\\\motor\\\\MSLB\\\\src\\\\MotorLoadBench.Infrastructure\\\\VescBridge.cs:line 124\"}",
+  "scopeStatusAfterStop": "SAST Arm",
+  "waveformBytes": 22,
+  "screenBytes": 2457658
+}

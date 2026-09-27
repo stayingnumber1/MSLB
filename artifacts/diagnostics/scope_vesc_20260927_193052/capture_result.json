@@ -1,0 +1,7 @@
+{
+  "failureDetectedUtc": "2026-09-27T11:30:57.621817Z",
+  "failureLog": "{\"timestampUtc\":\"2026-09-27T11:30:57.5999559+00:00\",\"code\":\"vesc_write_failed\",\"message\":\"port=COM4; commandId=4; elapsedMs=1.2; tokenCancelled=False; hresult=0x8013153B; error=System.OperationCanceledException: The operation was canceled.\\r\\n   at System.IO.Ports.SerialStream.EndWrite(IAsyncResult asyncResult)\\r\\n   at System.IO.Ports.SerialStream.Write(Byte[] array, Int32 offset, Int32 count, Int32 timeout)\\r\\n   at System.IO.Ports.SerialPort.Write(Byte[] buffer, Int32 offset, Int32 count)\\r\\n   at MotorLoadBench.Infrastructure.VescBridge.WriteAsync(Byte[] bytes, CancellationToken ct) in D:\\\\codex workspace\\\\motor\\\\MSLB\\\\src\\\\MotorLoadBench.Infrastructure\\\\VescBridge.cs:line 380\"}",
+  "scopeStatusAfterStop": "SAST Stop",
+  "waveformBytes": 1000022,
+  "screenBytes": 2457658
+}

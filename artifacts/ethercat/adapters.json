@@ -1,0 +1,46 @@
+{
+  "timestamp_utc": "2026-09-19T14:00:40.944472+00:00",
+  "action": "adapters",
+  "drive_writes": false,
+  "ok": true,
+  "pysoem_version": "1.1.13",
+  "adapters": [
+    {
+      "name": "\\Device\\NPF_{3B5EA108-F2EA-45ED-BD9C-90FEDF439E5B}",
+      "description": "WAN Miniport (Network Monitor)"
+    },
+    {
+      "name": "\\Device\\NPF_{C9B2B193-2C6C-46F9-9F51-193E35B88B33}",
+      "description": "WAN Miniport (IPv6)"
+    },
+    {
+      "name": "\\Device\\NPF_{336F4095-8AF0-4F91-8D17-8AB3936DD243}",
+      "description": "WAN Miniport (IP)"
+    },
+    {
+      "name": "\\Device\\NPF_{39942674-2E42-449A-ADF5-C306A3BBA1DD}",
+      "description": "Intel(R) Centrino(R) Advanced-N 6205 #2"
+    },
+    {
+      "name": "\\Device\\NPF_{9F9BCCE8-6557-49AC-B6F9-6C5BB3C2B158}",
+      "description": "Realtek PCIe GbE Family Controller #3"
+    },
+    {
+      "name": "\\Device\\NPF_{6E1BE18C-3EA2-42CE-9C05-21B297074953}",
+      "description": "Microsoft Wi-Fi Direct Virtual Adapter #8"
+    },
+    {
+      "name": "\\Device\\NPF_{BE2E4A91-EAC8-46FA-99D5-CEEF02D7F434}",
+      "description": "Microsoft Wi-Fi Direct Virtual Adapter #7"
+    },
+    {
+      "name": "\\Device\\NPF_Loopback",
+      "description": "Adapter for loopback traffic capture"
+    },
+    {
+      "name": "\\Device\\NPF_{A3A81456-1F4F-4B95-B8BE-AC3790875114}",
+      "description": "Realtek PCIe GbE Family Controller"
+    }
+  ],
+  "note": "Enumeration only; no device connection or EtherCAT frames."
+}
