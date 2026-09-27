@@ -1,72 +1,140 @@
 {
-  "version": 1,
-  "drive": {
-    "name": "SV635_ECAT operated with SV660N-compatible CoE/CiA402 dictionary",
-    "cstMode": 10,
-    "installationSign": -1,
-    "expectedRotationSign": 1,
-    "rawTorquePerNm": null,
-    "rpmPerRawVelocity": 0.000007152557373046875,
-    "modelVerified": true,
-    "pdoVerified": true,
-    "directionVerified": true,
-    "regenerationVerified": true,
-    "hardwareSafetyVerified": true,
-    "allowHardwareWrites": false
-  },
-  "limits": {
-    "maxTorqueNm": 0.2,
-    "continuousTorqueNm": 0.2,
-    "peakSeconds": 2,
-    "peakCooldownSeconds": 30,
-    "maxSpeedRpm": 500,
-    "minLoadSpeedRpm": 50,
-    "maxPowerW": 15,
-    "motorWarnC": 60,
-    "motorTripC": 70,
-    "brakeTripC": 80,
-    "dcBusTripV": null,
-    "maxRampNmPerSec": 0.2,
-    "stopRampNmPerSec": 0.2,
-    "zeroTorqueNm": 0.01,
-    "stopTimeoutSeconds": 5,
-    "heartbeatTimeoutMs": 500,
-    "snapshotTimeoutMs": 250,
-    "overTorqueDelayMs": 50,
-    "overTorqueMarginNm": 0.05,
-    "torqueEnvelope": [
-      {
-        "rpm": 0,
-        "torqueNm": 0.2
-      },
-      {
-        "rpm": 500,
-        "torqueNm": 0.2
-      }
-    ]
-  },
-  "ads": {
-    "amsNetId": "127.0.0.1.1.1",
-    "port": 851,
-    "commandSymbol": "GVL_Hmi.Command",
-    "commitSymbol": "GVL_Hmi.CommandCommit",
-    "statusSymbol": "GVL_Hmi.Status",
-    "timeoutMs": 200,
-    "reconnectMs": 2000
-  },
-  "torqueMap": [
-    {
-      "rpm": 0,
-      "torqueNm": 0
-    },
-    {
-      "rpm": 100,
-      "torqueNm": 0.05
-    },
-    {
-      "rpm": 500,
-      "torqueNm": 0.15
-    }
-  ],
-  "dataDirectory": "artifacts/sessions"
+    "version":  1,
+    "drive":  {
+                  "name":  "SV630_ECAT / InoSV630N",
+                  "cstMode":  10,
+                  "installationSign":  1,
+                  "expectedRotationSign":  -1,
+                  "rawTorquePerNm":  418.4100418410042,
+                  "ratedTorqueNm":  2.39,
+                  "rpmPerRawVelocity":  0.0002288818359375,
+                  "modelVerified":  true,
+                  "pdoVerified":  true,
+                  "directionVerified":  true,
+                  "regenerationVerified":  true,
+                  "hardwareSafetyVerified":  true,
+                  "allowHardwareWrites":  true
+              },
+    "limits":  {
+                   "maxTorqueNm":  8.36,
+                   "continuousTorqueNm":  2.39,
+                   "peakSeconds":  2,
+                   "peakCooldownSeconds":  30,
+                   "maxSpeedRpm":  6000,
+                   "maxSpeedRampRpmPerSec":  6000,
+                   "minLoadSpeedRpm":  50,
+                   "loadedStartTriggerRpm":  3,
+                   "loadedStartTriggerConfirmMs":  200,
+                   "loadedStartReverseTripRpm":  30,
+                   "loadedStartReverseConfirmMs":  300,
+                   "maxPowerW":  1050,
+                   "maxDutBusCurrentA":  35,
+                   "motorWarnC":  60,
+                   "motorTripC":  70,
+                   "dutMotorTripC":  150,
+                   "brakeTripC":  80,
+                   "dcBusTripV":  390,
+                   "maxRampNmPerSec":  2.39,
+                   "stopRampNmPerSec":  2.39,
+                   "zeroTorqueNm":  0.01,
+                   "stopTimeoutSeconds":  5,
+                   "heartbeatTimeoutMs":  500,
+                   "snapshotTimeoutMs":  250,
+                   "overTorqueDelayMs":  50,
+                   "overTorqueMarginNm":  0.05,
+                   "torqueEnvelope":  [
+                                          {
+                                              "rpm":  0,
+                                              "torqueNm":  8.36
+                                          },
+                                          {
+                                              "rpm":  6000,
+                                              "torqueNm":  8.36
+                                          }
+                                      ]
+               },
+    "ads":  {
+                "amsNetId":  "127.0.0.1.1.1",
+                "port":  851,
+                "commandSymbol":  "GVL_Hmi.Command",
+                "commitSymbol":  "GVL_Hmi.CommandCommit",
+                "statusSymbol":  "GVL_Hmi.Status",
+                "timeoutMs":  200,
+                "reconnectMs":  2000
+            },
+    "torqueSensor":  {
+                         "enabled":  true,
+                         "portName":  "COM3",
+                         "baudRate":  19200,
+                         "dataBits":  8,
+                         "parity":  "None",
+                         "stopBits":  1,
+                         "protocol":  "Hex6",
+                         "torqueDecimals":  3,
+                         "speedDecimals":  0,
+                         "directionSign":  1,
+                         "staleAfterMs":  100
+                     },
+    "vesc":  {
+                 "enabled":  false,
+                 "portName":  "COM4",
+                 "baudRate":  115200,
+                 "motorPolePairs":  7.0,
+                 "maxRpm":  6000,
+                 "currentModeMaxRpm":  6000,
+                 "maxMotorCurrentA":  100.0,
+                 "maxBrakeCurrentA":  3.0,
+                 "maxDutyCycle":  0.95,
+                 "defaultRampRpmPerSec":  100,
+                 "commandRateHz":  50,
+                 "telemetryRateHz":  20,
+                 "staleAfterMs":  500
+             },
+    "autoTest":  {
+                     "nominalVoltageV":  30.0,
+                     "nominalMaxSpeedRpm":  3000,
+                     "softCurrentA":  31.5,
+                     "softPowerW":  945.0,
+                     "reducedTorqueStepNm":  0.02,
+                     "torqueRampRateNmPerSec":  0.30,
+                     "pointSampleWindowSeconds":  1.0,
+                     "stableHoldSeconds":  0.5,
+                     "stableTimeoutSeconds":  10.0,
+                     "torqueStableFraction":  0.05,
+                     "rpmStableFraction":  0.05,
+                     "ibusStableFraction":  0.05,
+                     "telemetryTimeoutMs":  200,
+                     "zeroRpmTolerance":  10.0,
+                     "dynZeroTorqueToleranceNm":  0.05,
+                     "torqueRangeMaxNm":  4.0,
+                     "torqueStepNm":  0.10,
+                     "speedPlotMaxRpm":  3500,
+                     "lowSpeedStopRpm":  100,
+                     "stallStopRpm":  200.0,
+                     "stallConfirmSeconds":  0.2,
+                     "stallCrossingStopRampSeconds":  0.4,
+                     "stallCrossingTorqueRampNmPerSec":  7.0,
+                     "dutDriveMode":  "DutyCycle",
+                     "dutDriveValue":  0.95,
+                     "dutDutyRampPerSecond":  0.5,
+                     "overTemperatureStopRampSeconds":  1.5,
+                     "dutCurrentRampAperSec":  10.0,
+                     "simulationNoLoadRpm":  3000,
+                     "stopConfirmTimeoutSeconds":  10.0
+                 },
+    "torqueMap":  [
+                      {
+                          "rpm":  0,
+                          "torqueNm":  0
+                      },
+                      {
+                          "rpm":  100,
+                          "torqueNm":  0.05
+                      },
+                      {
+                          "rpm":  6000,
+                          "torqueNm":  0.15
+                      }
+                  ],
+    "dataDirectory":  "artifacts/sessions"
 }

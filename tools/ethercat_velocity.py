@@ -27,6 +27,18 @@ RX_SIZE = 17
 TX_SIZE = 29
 
 
+def encoder_resolution_for_drive(name, motor_code):
+    """Motor code 14101 alone does not distinguish 18-bit and 23-bit drives."""
+    name = as_text(name)
+    if name == "InoSV630N" and motor_code == 14101:
+        return 1 << 18
+    if name in ("InoSV635N", "InoSV660N"):
+        resolution = ENCODER_RESOLUTION_BY_MOTOR_CODE.get(motor_code)
+        if resolution is not None:
+            return resolution
+    raise ValueError(f"unverified drive/motor scaling: {name!r}, {motor_code}")
+
+
 def stable_read_int(slave, index, subindex, size, signed=False):
     """Require two identical CoE reads; this drive can briefly return stale mailbox data."""
     previous = None
@@ -154,9 +166,7 @@ class CsvSession:
         if (supported & (1 << (CSV_MODE - 1))) == 0:
             raise ValueError(f"drive does not report CSV mode support (0x6502=0x{supported:08X})")
         motor_code = stable_read_int(self.slave, 0x2000, 1, 2)
-        encoder = ENCODER_RESOLUTION_BY_MOTOR_CODE.get(motor_code)
-        if encoder is None:
-            raise ValueError(f"unsupported/unverified motor code {motor_code}")
+        encoder = encoder_resolution_for_drive(self.slave.name, motor_code)
         numerator = stable_read_int(self.slave, 0x6091, 1, 4)
         denominator = stable_read_int(self.slave, 0x6091, 2, 4)
         return motor_code, encoder, numerator, denominator

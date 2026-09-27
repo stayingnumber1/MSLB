@@ -11,7 +11,7 @@ import threading
 import time
 
 from ethercat_probe import decode_state, read_int
-from ethercat_velocity import (assign_fixed_pdo, identity_matches, pack_rx,
+from ethercat_velocity import (encoder_resolution_for_drive, assign_fixed_pdo, identity_matches, pack_rx,
                                raw_velocity_for_rpm, rpm_for_raw_velocity)
 
 
@@ -118,8 +118,8 @@ def main():
         result["zero_speed_state_proof"] = state_proof
 
         if args.run_500:
-            encoder = 1 << 23
             with lock:
+                encoder = encoder_resolution_for_drive(slave.name, read_int(slave, 0x2000, 1, 2))
                 numerator = read_int(slave, 0x6091, 1, 4)
                 denominator = read_int(slave, 0x6091, 2, 4)
 
