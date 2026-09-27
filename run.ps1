@@ -5,7 +5,7 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_ROOT = 'C:\Program Files\dotnet'
 $env:DOTNET_ROOT_X64 = 'C:\Program Files\dotnet'
 $env:DOTNET_MULTILEVEL_LOOKUP = '1'
-$app = Join-Path $PSScriptRoot 'artifacts/app-v148/MotorLoadBench.UI.exe'
+$app = Join-Path $PSScriptRoot 'artifacts/app-v149/MotorLoadBench.UI.exe'
 if (Test-Path -LiteralPath $app) {
     $arguments = if ($EtherCatScan) { @('--ethercat-connect') } else { @() }
     Start-Process -FilePath $app -ArgumentList $arguments -WorkingDirectory $PSScriptRoot
