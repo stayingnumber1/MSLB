@@ -1,0 +1,30 @@
+Controlled test: 1000 RPM, no load
+ST-Link NRST: disconnected
+Oscilloscope: CH3=MCU NRST, CH4=MCU 3.3 V
+
+Host timeline (UTC):
+- command: 06:11:37.0898716
+- COM9 failure detected: 06:11:37.2247541 (about 135 ms after command)
+- COM9 reconnect succeeded: 06:11:41.7165211
+- stop sent after recovery: confirmed by diagnostic result
+
+Reset evidence:
+- before: boot=16 flags=0x08 reason=EXTERNAL_PIN
+- after:  boot=17 flags=0x08 reason=EXTERNAL_PIN
+- scope single trigger state after event: Stop (trigger captured)
+- CH3 NRST: top=3.27 V, min=0.891 V, amplitude=2.38 V
+- CH3 falling edge=43 ns, negative pulse width=31.1 us, rise=1.98 us
+- conclusion: a physical NRST low pulse reset the MCU even with ST-Link NRST disconnected
+
+CH4 validity warning:
+- CH4 was a constant 0.891 V (min=max=mean=0.891 V, pk-pk=0 V).
+- This is not a valid 3.3 V rail capture; probe point/ground/attenuation/channel assignment must be corrected before using CH4 to accept or reject supply droop.
+
+Realtime checks after reboot:
+- current loop max=64.10 us / budget=142.86 us, OK
+- encoder elapsed max=85.96 us / budget=62.50 us; typical/preempted wall-time metric
+- AS5047 valid=353300, invalid=0, timeout=0, parity=0, diag_err=0
+
+Root-cause boundary:
+- software crash, watchdog, and ST-Link-driven reset are not supported by this capture.
+- the remaining fault is on the board NRST network: EMI/capacitive injection, insufficient pull-up/filtering, reset supervisor, or another device connected to NRST.

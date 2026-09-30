@@ -1,0 +1,4 @@
+controlled 1000 RPM
+CH3=MCU NRST
+CH4=MCU 3.3V
+ST-Link NRST disconnected

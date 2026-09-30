@@ -10,7 +10,7 @@ public partial class MainWindow : Window
     private bool _closing;
     public MainWindow()
     {
-        InitializeComponent(); DataContext = _vm; Loaded += SmokeIfRequested; Loaded += ConnectEtherCatIfRequested; Loaded += CaptureServoEnableVescIfRequested;
+        InitializeComponent(); DataContext = _vm; Loaded += SmokeIfRequested; Loaded += ConnectEtherCatIfRequested; Loaded += CaptureServoEnableVescIfRequested; Loaded += CaptureDutRunIfRequested;
         _vm.ExportVisualsRequested += ExportVisuals;
         _timer.Tick += (_, _) => { _vm.Refresh(); if (_vm.Snapshot is { Connected: true } s) { Trend.WindowSeconds = _vm.TrendWindowIndex switch { 0 => 10, 1 => 60, _ => 0 }; Trend.Push(s); } PerformanceCurve.SetPoints(_vm.TestResults); };
         _timer.Start(); Closing += OnClosing;
@@ -64,7 +64,13 @@ public partial class MainWindow : Window
     }
     private async void CaptureServoEnableVescIfRequested(object sender, RoutedEventArgs e)
     {
-        if (!Environment.GetCommandLineArgs().Contains("--capture-servo-enable-vesc")) return;
+        var args = Environment.GetCommandLineArgs();
+        if (!args.Contains("--capture-servo-enable-vesc")) return;
+        var portIndex = Array.FindIndex(args, value =>
+            string.Equals(value, "--vesc-port", StringComparison.OrdinalIgnoreCase));
+        var portName = portIndex >= 0 && portIndex + 1 < args.Length
+            ? args[portIndex + 1]
+            : "COM9";
         Hide();
         var directory = System.IO.Path.Combine(Environment.CurrentDirectory, "artifacts", "diagnostics");
         System.IO.Directory.CreateDirectory(directory);
@@ -72,13 +78,35 @@ public partial class MainWindow : Window
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await _vm.CaptureServoEnableVescAsync("COM4", timeout.Token);
-            await System.IO.File.WriteAllTextAsync(resultPath, "PASS: COM4/VESC remained healthy for 60 seconds after EtherCAT CST zero-command enable.");
+            await _vm.CaptureServoEnableVescAsync(portName, timeout.Token);
+            await System.IO.File.WriteAllTextAsync(resultPath, $"PASS: {portName}/VESC remained healthy for 60 seconds after EtherCAT CST zero-command enable.");
             _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(0);
         }
         catch (Exception ex)
         {
             await System.IO.File.WriteAllTextAsync(resultPath, "FAIL: " + ex);
+            _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(1);
+        }
+    }
+    private async void CaptureDutRunIfRequested(object sender, RoutedEventArgs e)
+    {
+        var args = Environment.GetCommandLineArgs();
+        if (!args.Contains("--capture-dut-run")) return;
+        var portIndex = Array.FindIndex(args, value => string.Equals(value, "--vesc-port", StringComparison.OrdinalIgnoreCase));
+        var portName = portIndex >= 0 && portIndex + 1 < args.Length ? args[portIndex + 1] : "COM9";
+        Hide();
+        var directory = System.IO.Path.Combine(Environment.CurrentDirectory, "artifacts", "diagnostics");
+        System.IO.Directory.CreateDirectory(directory);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            await _vm.CaptureDutRunAsync(portName, 1000, timeout.Token);
+            await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(directory, "dut_run_capture_result.txt"), "PASS: 1000 RPM diagnostic completed without a USB interruption.");
+            _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(0);
+        }
+        catch (Exception ex)
+        {
+            await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(directory, "dut_run_capture_result.txt"), "FAIL: " + ex);
             _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(1);
         }
     }

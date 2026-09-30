@@ -1,0 +1,4 @@
+FAIL: System.IO.IOException: COM9 disappeared after the 1000 RPM command; stop was sent after recovery=True.
+   at MotorLoadBench.UI.MainViewModel.CaptureDutRunAsync(String portName, Double rpm, CancellationToken ct) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1338
+   at MotorLoadBench.UI.MainViewModel.CaptureDutRunAsync(String portName, Double rpm, CancellationToken ct) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1348
+   at MotorLoadBench.UI.MainWindow.CaptureDutRunIfRequested(Object sender, RoutedEventArgs e) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainWindow.xaml.cs:line 103

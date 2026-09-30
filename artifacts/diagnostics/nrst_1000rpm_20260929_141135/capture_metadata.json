@@ -1,0 +1,14 @@
+{
+  "screenBytes": 2457659,
+  "screenBmp": true,
+  "waveforms": {
+    "C3": {
+      "bytes": 1000022,
+      "header": "C3:WF DAT2,#9001000000"
+    },
+    "C4": {
+      "bytes": 1000022,
+      "header": "C4:WF DAT2,#9001000000"
+    }
+  }
+}

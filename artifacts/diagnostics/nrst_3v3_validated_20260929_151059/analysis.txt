@@ -1,0 +1,26 @@
+Controlled test: 1000 RPM, no load
+CH3: MCU NRST, 10X
+CH4: MCU 3.3 V, 10X
+ST-Link NRST: disconnected
+
+Result:
+- COM9 disappeared and recovered; stop was sent after recovery.
+- scope state changed Ready -> Stop and both 1,000,000-point waveforms were saved.
+- reboot diagnostic: boot=4, flags=0x08, reason=EXTERNAL_PIN.
+
+CH3 / NRST:
+- normal/top approximately 3.28 V
+- captured minimum approximately 1.65 V
+- negative pulse width approximately 1.04 us
+- falling edge approximately 16 ns; rising edge approximately 2.58 us
+- raw trigger window contains a sustained negative excursion down to -88 counts.
+
+CH4 / 3.3 V:
+- mean approximately 3.29 V
+- contains high-frequency probe/common-mode spikes, so global min/max are not rail accuracy measurements
+- at the NRST trigger there is no sustained rail collapse matching the CH3 pulse; raw samples alternate in polarity rather than remaining low
+
+Conclusion:
+- This is an NRST-network transient, not a USB-only software failure.
+- The evidence does not show a sustained 3.3 V rail collapse at the reset event.
+- Priority moves to board-level NRST immunity: local pull-up, RC filter, reset-supervisor/other NRST drivers, trace coupling, and short-ground probing.

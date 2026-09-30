@@ -6,6 +6,70 @@ using MotorLoadBench.Application;
 using MotorLoadBench.Domain;
 using MotorLoadBench.Infrastructure;
 
+// Safe USB/CDC soak: production VescBridge traffic with duty fixed at zero.
+// Usage: --soak-vesc COM9 [seconds].
+if (args.Contains("--soak-vesc", StringComparer.OrdinalIgnoreCase))
+{
+    var optionIndex = Array.FindIndex(args, a => string.Equals(a, "--soak-vesc", StringComparison.OrdinalIgnoreCase));
+    var portName = optionIndex >= 0 && optionIndex + 1 < args.Length ? args[optionIndex + 1] : "COM9";
+    var seconds = optionIndex >= 0 && optionIndex + 2 < args.Length && int.TryParse(args[optionIndex + 2], out var parsed)
+        ? Math.Clamp(parsed, 5, 3600) : 60;
+    var soakConfig = new BenchConfig
+    {
+        Vesc = new VescConfig { BaudRate = 115200, TelemetryRateHz = 10, StaleAfterMs = 500 }
+    };
+    var soakBridge = new VescBridge(new MockRealtimeBridge(soakConfig), soakConfig.Vesc);
+    var diagnostics = new List<string>();
+    soakBridge.Diagnostic += (code, message) =>
+    {
+        lock (diagnostics) diagnostics.Add($"{DateTimeOffset.UtcNow:O} {code} {message}");
+    };
+    var watch = Stopwatch.StartNew();
+    var updates = 0;
+    var disconnectedSamples = 0;
+    try
+    {
+        await soakBridge.ConnectAsync(CancellationToken.None);
+        using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(9));
+        await soakBridge.ConnectDutAsync(portName, connectTimeout.Token);
+        while (watch.Elapsed < TimeSpan.FromSeconds(seconds))
+        {
+            await soakBridge.SetDutAsync(DutControlMode.DutyCycle, 0, CancellationToken.None);
+            updates++;
+            var snapshot = await soakBridge.ReadSnapshotAsync(CancellationToken.None);
+            if (!snapshot.Connected || !soakBridge.CanControlDut ||
+                !WindowsSerialPortDiscovery.GetAllPorts().Contains(portName, StringComparer.OrdinalIgnoreCase))
+                disconnectedSamples++;
+            if (updates % 500 == 0)
+                Console.WriteLine($"SOAK t={watch.Elapsed.TotalSeconds:F1}s updates={updates} disconnected={disconnectedSamples}");
+            await Task.Delay(20);
+        }
+        await soakBridge.StopDutAsync(CancellationToken.None);
+    }
+    finally
+    {
+        await soakBridge.DisconnectAsync();
+    }
+    string[] captured;
+    lock (diagnostics) captured = diagnostics.ToArray();
+    var writeFaults = captured.Count(line =>
+        line.Contains("write", StringComparison.OrdinalIgnoreCase) &&
+        (line.Contains("abort", StringComparison.OrdinalIgnoreCase) ||
+         line.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+         line.Contains("deferred", StringComparison.OrdinalIgnoreCase)));
+    var delayedTelemetry = captured.Count(line => line.Contains("vesc_telemetry_delayed", StringComparison.OrdinalIgnoreCase) ||
+                                                  line.Contains("vesc_idle_telemetry_stale", StringComparison.OrdinalIgnoreCase));
+    var pass = disconnectedSamples == 0 && writeFaults == 0 && delayedTelemetry == 0;
+    Console.WriteLine($"SOAK RESULT: {(pass ? "PASS" : "FAIL")} seconds={watch.Elapsed.TotalSeconds:F1} updates={updates} disconnected={disconnectedSamples} write_faults={writeFaults} telemetry_delays={delayedTelemetry}");
+    foreach (var line in captured.Where(line => line.Contains("abort", StringComparison.OrdinalIgnoreCase) ||
+                                                line.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                                                line.Contains("deferred", StringComparison.OrdinalIgnoreCase) ||
+                                                line.Contains("telemetry_delayed", StringComparison.OrdinalIgnoreCase) ||
+                                                line.Contains("telemetry_stale", StringComparison.OrdinalIgnoreCase)))
+        Console.WriteLine(line);
+    return pass ? 0 : 3;
+}
+
 // 用法：--probe-vesc [COMx]   省略端口时默认探测 COM3。
 if (args.Contains("--probe-vesc", StringComparer.OrdinalIgnoreCase))
 {

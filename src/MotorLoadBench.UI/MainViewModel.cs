@@ -41,6 +41,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string? _testArchiveDirectory;
     private string? _testFileTag;
     private DateTimeOffset _lastLinkTraceAt;
+    private DateTimeOffset _nextDutPortRefreshAt;
     private int _dutRecoveryRunning;
     private int _connectionMode = 1;
     public BenchSnapshot? Snapshot
@@ -274,7 +275,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ when LoadModeIndex == (int)LoadMode.ConstantTorque => "恒扭矩已就绪 · 可从 0 RPM 按斜坡加载",
         _ => "CST 已使能 · 等待加载指令"
     };
-    private static string Value(double? value, string format, string unit) => value is { } v && double.IsFinite(v) ? $"{v.ToString(format, CultureInfo.InvariantCulture)} {unit}" : "未接入";
+    private static string Value(double? value, string format, string unit) => value is { } v && double.IsFinite(v) ? $"{v.ToString(format, CultureInfo.InvariantCulture)} {unit}" : "N/A";
     public string StateText => Snapshot is { Connected: true } s
         ? $"{s.State} | Servo {(s.ServoOn ? "ON" : "OFF")} | Interlock 0x{(uint)s.Interlocks:X} | Error 0x{s.ErrorCode:X}"
           + (s.AuxiliaryFaultCode is { } auxiliary ? $" | Aux 0x{auxiliary:X8}" : "")
@@ -1123,7 +1124,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 return;
             }
 
-            _recorder?.Event("vesc_recovery_start", $"port={portName}; policy=stop servo, clear DUT command, reconnect 3 attempts");
+            _recorder?.Event("vesc_recovery_start", $"port={portName}; policy=stop servo, clear DUT command, wait for USB re-enumeration up to 120s");
             _dutCommandMode = null;
             _dutCommandValue = 0;
 
@@ -1146,10 +1147,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _recorder?.Event("vesc_recovery_stop_error", ex.ToString());
             }
 
-            for (var attempt = 1; attempt <= 3; attempt++)
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(120);
+            var attempt = 0;
+            while (DateTimeOffset.UtcNow < deadline)
             {
                 if (!ReferenceEquals(_dutRuntime, runtime)) return;
-                await Task.Delay(TimeSpan.FromSeconds(attempt), CancellationToken.None);
+                if (!runtime.AvailableDutPorts.Contains(portName, StringComparer.OrdinalIgnoreCase))
+                {
+                    SetDutScanStatus($"Waiting for {portName} to reconnect...");
+                    await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
+                    continue;
+                }
+
+                attempt++;
+                SetDutScanStatus($"Reconnecting {portName} (attempt {attempt})...");
                 try
                 {
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
@@ -1162,15 +1173,33 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 catch (Exception ex)
                 {
                     _recorder?.Event("vesc_recovery_retry", $"port={portName}; attempt={attempt}; error={ex}");
+                    await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
                 }
             }
-            _recorder?.Event("vesc_recovery_failed", $"port={portName}; attempts=3; manual power cycle required");
+            _recorder?.Event("vesc_recovery_failed", $"port={portName}; waitSeconds=120; connectAttempts={attempt}; manual power cycle required");
             System.Windows.Application.Current.Dispatcher.Invoke(() => AddEvent($"VESC/M1 自动重连失败：{portName}；请检查主控 USB/供电并重新上电"));
         }
         finally
         {
+            SetDutScanStatus(null);
             Interlocked.Exchange(ref _dutRecoveryRunning, 0);
         }
+    }
+
+    private void SetDutScanStatus(string? status)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess())
+        {
+            _dutScanStatus = status;
+            PropertyChanged?.Invoke(this, new(nameof(DutControllerStatusDisplay)));
+            return;
+        }
+        dispatcher.Invoke(() =>
+        {
+            _dutScanStatus = status;
+            PropertyChanged?.Invoke(this, new(nameof(DutControllerStatusDisplay)));
+        });
     }
     private static string SafeFileName(string value)
     {
@@ -1271,8 +1300,61 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
         }
     }
+
+    public async Task CaptureDutRunAsync(string portName, double rpm, CancellationToken ct)
+    {
+        if (_runtime != null || _dutRuntime != null) throw new InvalidOperationException("Diagnostic requires disconnected devices.");
+        ReadConfig();
+        var moduleConfig = _config with { Vesc = _config.Vesc with { Enabled = false } };
+        var vescBridge = new VescBridge(new MockRealtimeBridge(moduleConfig), moduleConfig.Vesc);
+        vescBridge.Diagnostic += RecordVescDiagnostic;
+        _dutRuntime = new BenchRuntime(vescBridge, moduleConfig, new NullSessionRecorder());
+        var interrupted = false;
+        try
+        {
+            await _dutRuntime.StartAsync(ct);
+            await _dutRuntime.ConnectDutAsync(portName, ct);
+            _connectedDutPortName = portName;
+            await _dutRuntime.SetDutAsync(DutControlMode.SpeedRpm, rpm, ct);
+            RecordVescDiagnostic("dut_scope_command", $"port={portName}; speedRpm={rpm:F0}");
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(8);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!_dutRuntime.CanControlDut) { interrupted = true; break; }
+                await Task.Delay(20, ct);
+            }
+
+            if (interrupted)
+            {
+                var recoveryDeadline = DateTimeOffset.UtcNow.AddSeconds(20);
+                while (!_dutRuntime.CanControlDut && DateTimeOffset.UtcNow < recoveryDeadline)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await Task.Delay(50, ct);
+                }
+            }
+            if (_dutRuntime.CanControlDut) await _dutRuntime.StopDutAsync(CancellationToken.None);
+            if (interrupted) throw new IOException($"{portName} disappeared after the {rpm:F0} RPM command; stop was sent after recovery={_dutRuntime.CanControlDut}.");
+        }
+        finally
+        {
+            if (_dutRuntime != null)
+            {
+                if (_dutRuntime.CanControlDut) try { await _dutRuntime.StopDutAsync(CancellationToken.None); } catch { }
+                await _dutRuntime.DisposeAsync();
+                _dutRuntime = null;
+            }
+            _connectedDutPortName = null;
+        }
+    }
     public void Refresh()
     {
+        if (Volatile.Read(ref _dutRecoveryRunning) != 0 && DateTimeOffset.UtcNow >= _nextDutPortRefreshAt)
+        {
+            _nextDutPortRefreshAt = DateTimeOffset.UtcNow.AddSeconds(1);
+            RefreshDutPorts();
+        }
         if (_runtime != null) while (_runtime.Alarms.TryDequeue(out var alarm)) AddEvent($"{alarm.Code}: {alarm.Message}");
         foreach (var p in new[] { nameof(ConnectionText), nameof(EtherCatStatusColor), nameof(EtherCatStatusText), nameof(ServoHeaderSummary), nameof(ModeBanner), nameof(LimitsText), nameof(DirectSpeedRangeText), nameof(DirectRampRangeText), nameof(DirectRampLabel), nameof(RpmDisplay), nameof(TorqueDisplay),
             nameof(PowerDisplay), nameof(BusDisplay), nameof(TemperatureDisplay), nameof(SensorTorqueDisplay), nameof(SensorSpeedDisplay),
@@ -1287,11 +1369,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void RefreshDutPorts()
     {
         var previous = SelectedDutPort;
+        var targetPortName = _connectedDutPortName ?? previous?.PortName ?? _config.Vesc.PortName;
         DutPorts.Clear();
         foreach (var port in WindowsSerialPortDiscovery.GetAllPortInfos())
             DutPorts.Add(port);
         SelectedDutPort = previous != null ? DutPorts.FirstOrDefault(p => string.Equals(p.PortName, previous.PortName, StringComparison.OrdinalIgnoreCase)) : null;
-        SelectedDutPort ??= DutPorts.FirstOrDefault(p => !string.Equals(p.PortName, _config.TorqueSensor.PortName, StringComparison.OrdinalIgnoreCase));
+        SelectedDutPort ??= DutPorts.FirstOrDefault(p => string.Equals(p.PortName, _config.Vesc.PortName, StringComparison.OrdinalIgnoreCase));
+        // Keep the intended VESC port visible while the USB CDC device is absent.
+        // This preserves identity across re-enumeration without probing COM1/COM2.
+        if (SelectedDutPort == null && !string.IsNullOrWhiteSpace(targetPortName))
+        {
+            var offline = new WindowsSerialPortDiscovery.PortInfo(targetPortName, $"{targetPortName} (offline - waiting for USB)");
+            DutPorts.Add(offline);
+            SelectedDutPort = offline;
+        }
         PropertyChanged?.Invoke(this, new(nameof(SelectedDutPort)));
         PropertyChanged?.Invoke(this, new(nameof(DutControllerStatusDisplay)));
     }

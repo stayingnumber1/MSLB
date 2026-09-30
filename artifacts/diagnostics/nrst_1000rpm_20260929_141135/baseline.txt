@@ -1,0 +1,4 @@
+boot=16 flags=0x08 reason=EXTERNAL_PIN
+scope CH3=NRST CH4=3.3V
+ST-Link NRST disconnected
+trigger C3 falling 1.5V, 2ms/div, 50MSa/s, 1M

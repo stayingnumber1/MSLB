@@ -16,23 +16,19 @@ public static class WindowsSerialPortDiscovery
     public static IReadOnlyList<string> GetAllPorts()
     {
         var ports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // SetupAPI with DIGCF_PRESENT is authoritative on Windows. The
+        // SERIALCOMM registry key and SerialPort.GetPortNames can retain a
+        // phantom COM name while a USB CDC device is re-enumerating.
+        if (OperatingSystem.IsWindows())
+        {
+            var present = GetFriendlyNames();
+            if (present.Count > 0) return OrderPorts(present.Keys);
+        }
         try
         {
             foreach (var port in SerialPort.GetPortNames()) Add(ports, port);
         }
-        catch { /* Registry enumeration below remains available. */ }
-
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DEVICEMAP\SERIALCOMM", false);
-                if (key != null)
-                    foreach (var name in key.GetValueNames())
-                        if (key.GetValue(name) is string port) Add(ports, port);
-            }
-        }
-        catch { /* Return whatever the runtime enumeration supplied. */ }
+        catch { }
 
         return OrderPorts(ports);
     }
@@ -40,7 +36,8 @@ public static class WindowsSerialPortDiscovery
     public static IReadOnlyList<PortInfo> GetAllPortInfos()
     {
         var names = OperatingSystem.IsWindows() ? GetFriendlyNames() : new Dictionary<string, string>();
-        return GetAllPorts().Select(port => new PortInfo(port,
+        var ports = names.Count > 0 ? OrderPorts(names.Keys) : GetAllPorts();
+        return ports.Select(port => new PortInfo(port,
             names.TryGetValue(port, out var friendly) ? friendly : port)).ToArray();
     }
 

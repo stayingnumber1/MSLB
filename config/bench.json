@@ -77,7 +77,7 @@
                      },
     "vesc":  {
                  "enabled":  false,
-                 "portName":  "COM4",
+                 "portName":  "COM9",
                  "baudRate":  115200,
                  "motorPolePairs":  7.0,
                  "maxRpm":  6000,
@@ -87,7 +87,7 @@
                  "maxDutyCycle":  0.95,
                  "defaultRampRpmPerSec":  100,
                  "commandRateHz":  50,
-                 "telemetryRateHz":  20,
+                 "telemetryRateHz":  10,
                  "staleAfterMs":  500
              },
     "autoTest":  {

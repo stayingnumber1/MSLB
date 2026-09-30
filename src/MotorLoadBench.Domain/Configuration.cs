@@ -87,7 +87,7 @@ public record VescConfig
     public double MaxDutyCycle { get; init; } = .95;
     public double DefaultRampRpmPerSec { get; init; } = 100;
     public int CommandRateHz { get; init; } = 50;
-    public int TelemetryRateHz { get; init; } = 20;
+    public int TelemetryRateHz { get; init; } = 10;
     public int StaleAfterMs { get; init; } = 500;
 }
 public record BenchConfig

@@ -1,12 +1,4 @@
-FAIL: System.IO.IOException: 串口 COM4 打开失败：Access to the path 'COM4' is denied.。请确认端口未被 VESC Tool 或其他程序占用，且驱动已安装。
- ---> System.UnauthorizedAccessException: Access to the path 'COM4' is denied.
-   at System.IO.Ports.SerialStream..ctor(String portName, Int32 baudRate, Parity parity, Int32 dataBits, StopBits stopBits, Int32 readTimeout, Int32 writeTimeout, Handshake handshake, Boolean dtrEnable, Boolean rtsEnable, Boolean discardNull, Byte parityReplace)
-   at System.IO.Ports.SerialPort.Open()
-   at MotorLoadBench.Infrastructure.VescBridge.ProbeAsync(String portName, Int32 baudRate, Boolean dtrEnable, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.Infrastructure\VescBridge.cs:line 124
-   --- End of inner exception stack trace ---
-   at MotorLoadBench.Infrastructure.VescBridge.ProbeAsync(String portName, Int32 baudRate, Boolean dtrEnable, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.Infrastructure\VescBridge.cs:line 130
-   at MotorLoadBench.Infrastructure.VescBridge.ProbeAsync(String portName, Int32 baudRate, Boolean dtrEnable, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.Infrastructure\VescBridge.cs:line 176
-   at MotorLoadBench.Infrastructure.VescBridge.ConnectDutAsync(String portName, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.Infrastructure\VescBridge.cs:line 84
-   at MotorLoadBench.UI.MainViewModel.CaptureServoEnableVescAsync(String portName, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1211
-   at MotorLoadBench.UI.MainViewModel.CaptureServoEnableVescAsync(String portName, CancellationToken ct) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1270
-   at MotorLoadBench.UI.MainWindow.CaptureServoEnableVescIfRequested(Object sender, RoutedEventArgs e) in D:\codex workspace\motor\MSLB\src\MotorLoadBench.UI\MainWindow.xaml.cs:line 75
+FAIL: System.IO.IOException: 伺服零指令使能后的 60 秒监测期间 VESC 通信曾中断；即使自动恢复也不能判定为连续稳定
+   at MotorLoadBench.UI.MainViewModel.CaptureServoEnableVescAsync(String portName, CancellationToken ct) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1254
+   at MotorLoadBench.UI.MainViewModel.CaptureServoEnableVescAsync(String portName, CancellationToken ct) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainViewModel.cs:line 1270
+   at MotorLoadBench.UI.MainWindow.CaptureServoEnableVescIfRequested(Object sender, RoutedEventArgs e) in D:\software\github\MSLB\src\MotorLoadBench.UI\MainWindow.xaml.cs:line 81
