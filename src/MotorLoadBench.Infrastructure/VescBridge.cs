@@ -1,4 +1,5 @@
 using System.IO.Ports;
+using System.Diagnostics;
 using MotorLoadBench.Application;
 using MotorLoadBench.Domain;
 
@@ -46,6 +47,10 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
     private DateTimeOffset _lastActiveAbortedWriteAt;
     private bool _telemetryRequestPending;
     private DateTimeOffset _telemetryRequestAt;
+    private readonly VescTimingTrace? _timing = VescTimingTrace.TryCreate();
+    private long _telemetryRequestSequence;
+    private long _lastTelemetryRequestSequence;
+    private long _requestsSinceTelemetry;
     public event Action<string, string>? Diagnostic;
 
     private void Trace(string code, string message)
@@ -81,6 +86,7 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
 
     private async Task ConnectDutCoreAsync(string portName, CancellationToken ct)
     {
+        if (_timing is not null) Trace("vesc_timing_file", $"path={_timing.Path}; clock=Stopwatch.GetTimestamp; correlation=latest-request-candidate-not-unique-protocol-ID");
         if (string.IsNullOrWhiteSpace(portName)) throw new ArgumentException("请选择 VESC 串口。", nameof(portName));
         if (!AvailableDutPorts.Contains(portName, StringComparer.OrdinalIgnoreCase)) throw new IOException($"串口 {portName} 不存在，请刷新串口列表。");
         Trace("vesc_connect_start", $"port={portName}; configuredBaud={config.BaudRate}; ports={string.Join(',', AvailableDutPorts)}");
@@ -312,10 +318,18 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
         var telemetryPeriod = TimeSpan.FromSeconds(1.0 / config.TelemetryRateHz);
         var nextTelemetry = DateTimeOffset.UtcNow;
         var nextIdentity = DateTimeOffset.MinValue;
+        long lastLoopTick = 0;
         try
         {
             while (!ct.IsCancellationRequested)
             {
+                var loopTick = Stopwatch.GetTimestamp();
+                if (lastLoopTick != 0)
+                {
+                    var gapMs = (loopTick - lastLoopTick) * 1000 / Stopwatch.Frequency;
+                    if (gapMs > 150) _timing?.Record("worker_loop_gap", _lastTelemetryRequestSequence, gapMs);
+                }
+                lastLoopTick = loopTick;
                 var now = DateTimeOffset.UtcNow; byte[]? command; DutControlMode? mode; double commandValue; long generation; VescTelemetry telemetry;
                 lock (_gate) { command = _activeCommand; mode = _activeMode; commandValue = _activeValue; generation = _commandGeneration; telemetry = _telemetry; }
                 var energizedCommand = IsEnergizedCommand(mode, commandValue);
@@ -330,12 +344,16 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
                 var telemetryAge = _telemetryAt == default ? TimeSpan.MaxValue : now - _telemetryAt;
                 if (_telemetryAt != default && telemetryAge > SoftTelemetryTimeout && !_staleReported)
                 {
+                    _timing?.Record("telemetry_soft_stale", _lastTelemetryRequestSequence,
+                        (long)telemetryAge.TotalMilliseconds, _requestsSinceTelemetry);
                     _staleReported = true;
                     var ascii = new string(_recentRx.Select(b => b is >= 0x20 and <= 0x7E ? (char)b : '.').ToArray());
                     Trace("vesc_telemetry_delayed", $"port={_port?.PortName}; isOpen={_port?.IsOpen}; ageMs={telemetryAge.TotalMilliseconds:F1}; hardTimeoutMs={HardTelemetryTimeout.TotalMilliseconds:F0}; lastTelemetryUtc={_telemetryAt:O}; lastReadUtc={(_lastReadAt == default ? "none" : _lastReadAt.ToString("O"))}; lastWriteUtc={(_lastWriteAt == default ? "none" : _lastWriteAt.ToString("O"))}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}; bytesToRead={_port?.BytesToRead}; recentRxHex={Convert.ToHexString(_recentRx)}; recentRxAscii={ascii}");
                 }
                 if (_telemetryAt != default && telemetryAge > HardTelemetryTimeout && !_hardStaleReported)
                 {
+                    _timing?.Record("telemetry_hard_stale", _lastTelemetryRequestSequence,
+                        (long)telemetryAge.TotalMilliseconds, _requestsSinceTelemetry);
                     _hardStaleReported = true;
                     var staleCode = energizedCommand ? "vesc_telemetry_stale" : "vesc_idle_telemetry_stale";
                     Trace(staleCode, $"port={_port?.PortName}; isOpen={_port?.IsOpen}; ageMs={telemetryAge.TotalMilliseconds:F1}; hardTimeoutMs={HardTelemetryTimeout.TotalMilliseconds:F0}; lastTelemetryUtc={_telemetryAt:O}; lastReadUtc={(_lastReadAt == default ? "none" : _lastReadAt.ToString("O"))}; lastWriteUtc={(_lastWriteAt == default ? "none" : _lastWriteAt.ToString("O"))}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}; bytesToRead={_port?.BytesToRead}; action={(energizedCommand ? "fail-safe recovery" : "keep port open and continue reading")}");
@@ -371,6 +389,9 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
                     now - _telemetryRequestAt >= TimeSpan.FromMilliseconds(Math.Max(250, 2000.0 / config.TelemetryRateHz));
                 if (now >= nextTelemetry && now >= _writeBackoffUntil && (!_telemetryRequestPending || telemetryRequestExpired))
                 {
+                    _timing?.Record("telemetry_due", _lastTelemetryRequestSequence,
+                        (long)(now - nextTelemetry).TotalMilliseconds,
+                        _telemetryRequestPending ? 1 : 0);
                     await TryWriteMaintenanceAsync(VescProtocol.Request(VescProtocol.CommGetValues), ct, "telemetry");
                     nextTelemetry = now + telemetryPeriod;
                 }
@@ -425,11 +446,17 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
     {
         var port = _port ?? throw new IOException("VESC/M1 串口未打开。");
         await _writeGate.WaitAsync(ct);
+        var requestSeq = purpose == "telemetry" ? ++_telemetryRequestSequence : 0;
         try
         {
+            if (requestSeq != 0) _timing?.Record("request_write_start", requestSeq, bytes.Length);
             WriteOnce(port, bytes);
             if (purpose == "telemetry")
             {
+                _lastTelemetryRequestSequence = requestSeq;
+                _requestsSinceTelemetry++;
+                _timing?.Record("request_write_done", requestSeq, bytes.Length,
+                    _requestsSinceTelemetry);
                 _telemetryRequestPending = true;
                 _telemetryRequestAt = DateTimeOffset.UtcNow;
             }
@@ -461,6 +488,7 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested && _port?.IsOpen == true)
         {
+            if (requestSeq != 0) _timing?.Record("request_write_aborted", requestSeq, ex.HResult);
             var failures = Math.Min(8, Interlocked.Increment(ref _consecutiveAbortedWrites));
             _lastAbortedWriteAt = DateTimeOffset.UtcNow;
             var backoffMs = Math.Min(2000, 50 * (1 << (failures - 1)));
@@ -487,14 +515,18 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
             var available = SafeBytesToRead(port);
             if (available <= 0) break;
             int count;
+            _timing?.Record("serial_read_start", _lastTelemetryRequestSequence, available);
             try { count = port!.Read(buffer, 0, Math.Min(buffer.Length, available)); }
             catch (TimeoutException) { break; }
+            _timing?.RecordRead(_lastTelemetryRequestSequence, buffer, count, pending.Count);
             Interlocked.Add(ref _receivedBytes, count);
             _lastReadAt = DateTimeOffset.UtcNow;
             _recentRx = _recentRx.Concat(buffer.AsSpan(0, count).ToArray()).TakeLast(256).ToArray();
             pending.AddRange(buffer.AsSpan(0, count).ToArray());
             while (VescProtocol.TryTakeFrame(pending, out var payload))
             {
+                _timing?.Record("frame_valid", _lastTelemetryRequestSequence,
+                    payload.Length > 0 ? payload[0] : -1, payload.Length);
                 if (payload.Length >= 3 && payload[0] == VescProtocol.CommFwVersion)
                     lock (_gate)
                     {
@@ -503,6 +535,9 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
                     }
                 if (VescProtocol.TryDecodeValues(payload, out var value))
                 {
+                    _timing?.Record("telemetry_decoded", _lastTelemetryRequestSequence,
+                        _requestsSinceTelemetry, payload.Length);
+                    _requestsSinceTelemetry = 0;
                     if (_staleReported) Trace("vesc_telemetry_recovered", $"port={port.PortName}; delayedOnly={!_hardStaleReported}; rxBytes={Interlocked.Read(ref _receivedBytes)}; txBytes={Interlocked.Read(ref _transmittedBytes)}");
                     lock (_gate) { _telemetry = value; _telemetryAt = DateTimeOffset.UtcNow; _staleReported = false; _hardStaleReported = false; _telemetryRequestPending = false; }
                 }
@@ -613,5 +648,14 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
         }
     }
     private IDirectVelocityBridge Direct() => inner as IDirectVelocityBridge ?? throw new InvalidOperationException("底层连接不支持速度控制。");
-    public async ValueTask DisposeAsync() { await DisconnectAsync(); await inner.DisposeAsync(); _writeGate.Dispose(); _lifecycleGate.Dispose(); }
+    public async ValueTask DisposeAsync()
+    {
+        try { await DisconnectAsync(); await inner.DisposeAsync(); }
+        finally
+        {
+            if (_timing is not null) await _timing.DisposeAsync();
+            _writeGate.Dispose();
+            _lifecycleGate.Dispose();
+        }
+    }
 }

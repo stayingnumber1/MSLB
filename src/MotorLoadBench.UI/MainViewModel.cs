@@ -1234,8 +1234,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             throw new InvalidOperationException("UI simulation did not reach load");
     }
 
-    public async Task CaptureServoEnableVescAsync(string portName, CancellationToken ct)
+    public async Task CaptureServoEnableVescAsync(string portName, TimeSpan monitorDuration, CancellationToken ct)
     {
+        if (monitorDuration < TimeSpan.FromSeconds(60) || monitorDuration > TimeSpan.FromSeconds(300))
+            throw new ArgumentOutOfRangeException(nameof(monitorDuration));
         if (_runtime != null || _dutRuntime != null) throw new InvalidOperationException("诊断启动前设备必须处于未连接状态");
         ReadConfig();
         var moduleConfig = _config with { Vesc = _config.Vesc with { Enabled = false } };
@@ -1253,6 +1255,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (!_dutRuntime.CanControlDut) throw new IOException("COM4 已打开，但 VESC 遥测未就绪");
             var before = _dutRuntime.Latest;
             _recorder?.Event("vesc_before_servo_enable", $"timestamp={before.Timestamp:O}; vbus={before.DutBusV}; rpm={before.DutSpeedRpm}; fault={before.DutFaultCode}");
+            _recorder?.Event("combined_capture_pre_enable_baseline_start", "servoOn=False; seconds=15");
+            await Task.Delay(TimeSpan.FromSeconds(15), ct);
+            if (!_dutRuntime.CanControlDut)
+                throw new IOException("VESC telemetry failed during the Servo OFF diagnostic baseline.");
+            _recorder?.Event("combined_capture_pre_enable_baseline_end", "servoOn=False; vescHealthy=True");
             Runtime().Enable();
             var enableDeadline = DateTimeOffset.UtcNow.AddSeconds(5);
             while (!Runtime().Latest.ServoOn)
@@ -1262,41 +1269,47 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 await Task.Delay(25, ct);
             }
             _recorder?.Event("servo_zero_enable_confirmed", $"servoTimestamp={Runtime().Latest.Timestamp:O}; targetTorque={Runtime().Latest.TargetTorqueNm}; actualTorque={Runtime().Latest.ActualTorqueNm}");
-            var monitorDeadline = DateTimeOffset.UtcNow.AddSeconds(60);
-            var linkInterrupted = false;
+            var monitorDeadline = DateTimeOffset.UtcNow.Add(monitorDuration);
             while (DateTimeOffset.UtcNow < monitorDeadline)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!_dutRuntime.CanControlDut)
                 {
-                    linkInterrupted = true;
                     var failed = _dutRuntime.Latest;
-                    _recorder?.Event("combined_capture_recovery_wait", $"VESC unavailable after servo enable; timestamp={failed.Timestamp:O}; vbus={failed.DutBusV}; rpm={failed.DutSpeedRpm}; fault={failed.DutFaultCode}");
-                    var recoveryDeadline = DateTimeOffset.UtcNow.AddSeconds(30);
-                    while (!_dutRuntime.CanControlDut && DateTimeOffset.UtcNow < recoveryDeadline)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        await Task.Delay(100, ct);
-                    }
-                    if (!_dutRuntime.CanControlDut)
-                    {
-                        _recorder?.Event("combined_capture_failure", "VESC automatic recovery did not restore telemetry within 30 seconds");
-                        throw new IOException("伺服零指令使能后 VESC 遥测失效，自动重连未恢复");
-                    }
-                    _recorder?.Event("combined_capture_recovered", $"VESC telemetry restored; servoOn={Runtime().Latest.ServoOn}; commandsRestored=false");
+                    _recorder?.Event("combined_capture_failure", $"VESC unavailable after servo enable; stop servo immediately; timestamp={failed.Timestamp:O}; vbus={failed.DutBusV}; rpm={failed.DutSpeedRpm}; fault={failed.DutFaultCode}");
+                    throw new IOException("VESC telemetry reached hard timeout during zero-torque diagnostic; servo disable required immediately.");
+                }
+                var servo = Runtime().Latest;
+                if (!servo.ServoOn || servo.State == BenchState.Fault || servo.Interlocks != Interlock.None ||
+                    servo.ErrorCode != 0 || Math.Abs(servo.SpeedRpm) > 10 ||
+                    Math.Abs(servo.TargetTorqueNm) > 0.05 || Math.Abs(servo.ActualTorqueNm) > 1.0 ||
+                    _dutRuntime.Latest.DutFaultCode is > 0)
+                {
+                    _recorder?.Event("combined_capture_safety_abort", $"servoOn={servo.ServoOn}; state={servo.State}; interlocks={servo.Interlocks}; error={servo.ErrorCode}; servoRpm={servo.SpeedRpm}; targetTorque={servo.TargetTorqueNm}; actualTorque={servo.ActualTorqueNm}; vescFault={_dutRuntime.Latest.DutFaultCode}");
+                    throw new IOException("CST zero-torque diagnostic safety guard tripped; servo disable required immediately.");
                 }
                 await Task.Delay(50, ct);
             }
-            if (linkInterrupted)
-                throw new IOException("伺服零指令使能后的 60 秒监测期间 VESC 通信曾中断；即使自动恢复也不能判定为连续稳定");
             var after = _dutRuntime.Latest;
-            _recorder?.Event("combined_capture_pass", $"60s VESC telemetry continuous; timestamp={after.Timestamp:O}; vbus={after.DutBusV}; rpm={after.DutSpeedRpm}; fault={after.DutFaultCode}");
+            _recorder?.Event("combined_capture_pass", $"{monitorDuration.TotalSeconds:F0}s VESC telemetry continuous; timestamp={after.Timestamp:O}; vbus={after.DutBusV}; rpm={after.DutSpeedRpm}; fault={after.DutFaultCode}");
         }
         finally
         {
+            Exception? stopFailure = null;
             if (_runtime != null)
             {
-                try { await _runtime.StopAsync(true, CancellationToken.None); } catch (Exception ex) { _recorder?.Event("combined_capture_stop_error", ex.ToString()); }
+                try { await _runtime.StopAsync(true, CancellationToken.None); }
+                catch (Exception ex) { stopFailure = ex; _recorder?.Event("combined_capture_stop_error", ex.ToString()); }
+                if (_runtime.Latest.ServoOn)
+                    stopFailure ??= new IOException("Servo remained enabled after zero-torque diagnostic stop.");
+                if (stopFailure is null)
+                {
+                    _recorder?.Event("combined_capture_post_disable_start", $"vesc={portName}; seconds=10; servoOn=False");
+                    await Task.Delay(TimeSpan.FromSeconds(10), CancellationToken.None);
+                    _recorder?.Event("combined_capture_post_disable_end", $"vesc={portName}; servoOn={_runtime.Latest.ServoOn}; vescHealthy={_dutRuntime?.CanControlDut}");
+                    if (_runtime.Latest.ServoOn)
+                        stopFailure = new IOException("Servo re-enabled during post-disable observation.");
+                }
                 await _runtime.DisposeAsync();
                 _runtime = null;
             }
@@ -1306,6 +1319,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 await _dutRuntime.DisposeAsync();
                 _dutRuntime = null;
             }
+            if (stopFailure is not null) throw new IOException("Servo safe-disable could not be confirmed.", stopFailure);
         }
     }
 

@@ -74,19 +74,35 @@ public partial class MainWindow : Window
         Hide();
         var directory = System.IO.Path.Combine(Environment.CurrentDirectory, "artifacts", "diagnostics");
         System.IO.Directory.CreateDirectory(directory);
-        var resultPath = System.IO.Path.Combine(directory, "combined_capture_result.txt");
+        var resultPath = System.IO.Path.Combine(directory,
+            $"combined_capture_result_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.txt");
+        var latestResultPath = System.IO.Path.Combine(directory, "combined_capture_result.txt");
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await _vm.CaptureServoEnableVescAsync(portName, timeout.Token);
-            await System.IO.File.WriteAllTextAsync(resultPath, $"PASS: {portName}/VESC remained healthy for 60 seconds after EtherCAT CST zero-command enable.");
+            var monitorIndex = Array.FindIndex(args, value =>
+                string.Equals(value, "--monitor-seconds", StringComparison.OrdinalIgnoreCase));
+            var monitorSeconds = 60;
+            if (monitorIndex >= 0 && (monitorIndex + 1 >= args.Length ||
+                !int.TryParse(args[monitorIndex + 1], out monitorSeconds) ||
+                monitorSeconds is < 60 or > 300))
+                throw new ArgumentOutOfRangeException(nameof(monitorSeconds), "CST diagnostic duration must be 60-300 seconds.");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(monitorSeconds + 60));
+            await _vm.CaptureServoEnableVescAsync(portName, TimeSpan.FromSeconds(monitorSeconds), timeout.Token);
+            await WriteCaptureResultAsync(resultPath, latestResultPath,
+                $"PASS: {portName}/VESC remained healthy for {monitorSeconds} seconds after EtherCAT CST zero-command enable.");
             _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(0);
         }
         catch (Exception ex)
         {
-            await System.IO.File.WriteAllTextAsync(resultPath, "FAIL: " + ex);
+            await WriteCaptureResultAsync(resultPath, latestResultPath, "FAIL: " + ex);
             _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(1);
         }
+    }
+    private static async Task WriteCaptureResultAsync(string resultPath, string latestResultPath, string content)
+    {
+        await System.IO.File.WriteAllTextAsync(resultPath, content);
+        try { await System.IO.File.WriteAllTextAsync(latestResultPath, content); }
+        catch (System.IO.IOException) { }
     }
     private async void CaptureDutRunIfRequested(object sender, RoutedEventArgs e)
     {
