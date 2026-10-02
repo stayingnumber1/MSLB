@@ -40,7 +40,11 @@ public interface ISessionRecorder : IAsyncDisposable
     void CheckHealth();
 }
 
-public sealed class SafetyTripException(string message) : Exception(message);
+public sealed class SafetyTripException : Exception
+{
+    public SafetyTripException(string message) : base(message) { }
+    public SafetyTripException(string message, Exception innerException) : base(message, innerException) { }
+}
 public sealed class PointFailedException(string message) : Exception(message);
 
 public sealed class SafetyManager(BenchConfig config)
@@ -53,7 +57,8 @@ public sealed class SafetyManager(BenchConfig config)
         var l = config.Limits;
         if (!s.Connected || !s.EtherCatOnline) return "PLC/EtherCAT离线";
         if (!double.IsFinite(s.SpeedRpm) || !double.IsFinite(s.ActualTorqueNm) || !double.IsFinite(s.TargetTorqueNm)) return "反馈含非有限值";
-        if (new[] { s.DcBusV, s.MotorTempC, s.BrakeTempC }.Any(v => v.HasValue && !double.IsFinite(v.Value))) return "保护测量无效";
+        if (new[] { s.DcBusV, s.MotorTempC, s.BrakeTempC, s.DutCurrentA, s.DutPhaseCurrentA, s.DutMotorTempC }
+            .Any(v => v.HasValue && !double.IsFinite(v.Value))) return "保护测量无效";
         if (now - s.Timestamp > TimeSpan.FromMilliseconds(l.SnapshotTimeoutMs) || s.Timestamp > now.AddSeconds(1)) return "数据时间戳无效或过期";
         if (_heartbeat != s.PlcHeartbeat) { _heartbeat = s.PlcHeartbeat; _heartbeatAt = now; }
         if (now - _heartbeatAt > TimeSpan.FromMilliseconds(l.HeartbeatTimeoutMs)) return "PLC心跳停止";
@@ -62,11 +67,20 @@ public sealed class SafetyManager(BenchConfig config)
             return $"SERVO_REVERSE: {s.SpeedRpm:F1} RPM";
         if (Math.Abs(s.SpeedRpm) > l.MaxSpeedRpm) return "超速";
         if (s.DutCurrentA is { } busCurrent && Math.Abs(busCurrent) >= l.MaxDutBusCurrentA)
-            return $"DUT 母线电流达到硬限制：{busCurrent:F2} A";
+            return $"DUT_BUS_OVERCURRENT: 母线电流 {busCurrent:F2}/{l.MaxDutBusCurrentA:F2} A";
+        if (s.DutPhaseCurrentA is { } phaseCurrent && Math.Abs(phaseCurrent) >= config.Vesc.MaxMotorCurrentA)
+            return $"DUT_PHASE_OVERCURRENT: 相电流 {phaseCurrent:F2}/{config.Vesc.MaxMotorCurrentA:F2} A";
+        if (s.DutMotorTempC is { } dutMotorTemp && dutMotorTemp >= l.DutMotorTripC)
+            return $"DUT_OVERTEMP: 电机温度 {dutMotorTemp:F1}/{l.DutMotorTripC:F1} °C";
         if (s.InputPowerW is { } inputPower && inputPower >= l.MaxPowerW)
             return $"DUT 输入功率达到硬限制：{inputPower:F1} W";
         if (s.MotorTempC >= l.MotorTripC || s.BrakeTempC >= l.BrakeTripC) return "温度超限";
         if (l.DcBusTripV is { } max && s.DcBusV >= max) return "母线过压";
         return null;
     }
+
+    public static bool RequiresImmediateDutStop(string reason) =>
+        reason.StartsWith("DUT_BUS_OVERCURRENT:", StringComparison.Ordinal) ||
+        reason.StartsWith("DUT_PHASE_OVERCURRENT:", StringComparison.Ordinal) ||
+        reason.StartsWith("DUT_OVERTEMP:", StringComparison.Ordinal);
 }

@@ -302,11 +302,7 @@ public sealed class VescBridge(IRealtimeBridge inner, VescConfig config) : IReal
     {
         lock (_gate) { _activeCommand = null; _activeMode = null; _activeValue = 0; _commandGeneration++; _runRequested = false; }
         if (_port?.IsOpen == true)
-            for (var i = 0; i < 3; i++)
-            {
-                await WriteAsync(VescProtocol.SetCurrent(0), ct);
-                if (i < 2) await Task.Delay(10, ct);
-            }
+            await VescEmergencyStop.SendAsync(WriteAsync, ct);
     }
 
     private async Task WorkerAsync(CancellationToken ct)

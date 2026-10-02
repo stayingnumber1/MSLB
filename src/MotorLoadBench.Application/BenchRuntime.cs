@@ -27,6 +27,7 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
     public bool IsRunning => _loop is { IsCompleted: false };
     public ControlOwner Owner { get; private set; } = ControlOwner.Manual;
     public Func<BenchSnapshot, BenchSnapshot>? SnapshotOverlay { get; set; }
+    public Func<CancellationToken, Task>? EmergencyStopDutAsync { get; set; }
     public void AcquireAutoTest()
     {
         if (Owner == ControlOwner.Safety) throw new SafetyTripException("安全控制权已锁定");
@@ -206,9 +207,28 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
                     if (fault != null && !_safetyStopLatched)
                     {
                         _safetyStopLatched = true;
+                        var immediateDutStop = SafetyManager.RequiresImmediateDutStop(fault);
+                        if (immediateDutStop) Owner = ControlOwner.Safety;
                         var reverseEmergency = fault.StartsWith("SERVO_REVERSE", StringComparison.Ordinal);
                         var stopRamp = reverseEmergency ? config.AutoTest.StallCrossingTorqueRampNmPerSec : config.Limits.StopRampNmPerSec;
-                        Log("safety_trip_snapshot", $"source=SafetyManager; reason={fault}; action=Stop+Disable; {SnapshotTrace(s)}");
+                        Log("safety_trip_snapshot", $"source=SafetyManager; reason={fault}; action={(immediateDutStop ? "DUT emergency stop first, then Servo Stop+Disable" : "Stop+Disable")}; {SnapshotTrace(s)}");
+                        if (immediateDutStop)
+                        {
+                            try
+                            {
+                                if (EmergencyStopDutAsync != null)
+                                    await EmergencyStopDutAsync(CancellationToken.None);
+                                else if (bridge is IDutMotorBridge dut)
+                                    await dut.StopDutAsync(CancellationToken.None);
+                                else
+                                    throw new InvalidOperationException("DUT 紧急停机通道不可用");
+                                Log("dut_emergency_stop_sent", $"reason={fault}; repeatedZeroCurrentFrames=true");
+                            }
+                            catch (Exception stopEx)
+                            {
+                                Alarm("dut_emergency_stop_failed", stopEx.Message);
+                            }
+                        }
                         RequestStop(true, stopRamp, "SafetyManager:" + fault);
                         Alarm("safety", fault);
                     }

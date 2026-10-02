@@ -20,7 +20,7 @@ public record Limits
     public double MaxDutBusCurrentA { get; init; } = 35;
     public double MotorWarnC { get; init; } = 60;
     public double MotorTripC { get; init; } = 70;
-    public double DutMotorTripC { get; init; } = 150;
+    public double DutMotorTripC { get; init; } = 130;
     public double BrakeTripC { get; init; } = 80;
     public double? DcBusTripV { get; init; }
     public double MaxRampNmPerSec { get; init; } = .3;

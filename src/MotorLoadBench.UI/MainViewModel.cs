@@ -636,6 +636,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     if (_mock != null) _mock.SetSpeed(0);
                     if (_dutRuntime != null)
                     {
+                        if (coordinatedRampSeconds == 0)
+                        {
+                            _autoTestDutyCommand = 0;
+                            await _dutRuntime.StopDutAsync(ct);
+                            return;
+                        }
                         if (_orchestrator?.EndReason == "COMPLETED_STALL_200_RPM")
                         {
                             _autoTestDutyCommand = 0;
@@ -970,6 +976,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var recorder = new SessionRecorder(Path.GetFullPath(_config.DataDirectory, _root), _config, bridge.IsSimulation, hash);
             var runtime = new BenchRuntime(bridge, _config, recorder);
             runtime.SnapshotOverlay = MergeModuleSnapshots;
+            runtime.EmergencyStopDutAsync = ct => _dutRuntime?.StopDutAsync(ct) ??
+                Task.FromException(new InvalidOperationException("DUT 紧急停机通道已断开"));
             try { await runtime.StartAsync(CancellationToken.None); }
             catch { await runtime.DisposeAsync(); throw; }
             _recorder = recorder; _runtime = runtime;

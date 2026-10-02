@@ -138,6 +138,7 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
         var message = ex.Message;
         if (message.Contains("Telemetry", StringComparison.OrdinalIgnoreCase) || message.Contains("通信") || message.Contains("缺少")) return "COMMUNICATION_LOST";
         if (Math.Abs(s.DutCurrentA ?? 0) >= config.Limits.MaxDutBusCurrentA || message.Contains("DC Bus Current 达到", StringComparison.OrdinalIgnoreCase)) return "DC_CURRENT_LIMIT";
+        if (Math.Abs(s.DutPhaseCurrentA ?? 0) >= config.Vesc.MaxMotorCurrentA || message.Contains("Phase Current 达到", StringComparison.OrdinalIgnoreCase) || message.Contains("相电流", StringComparison.OrdinalIgnoreCase)) return "PHASE_CURRENT_LIMIT";
         if (Math.Abs((s.DutBusV ?? 0) * (s.DutCurrentA ?? 0)) >= config.Limits.MaxPowerW || message.Contains("输入功率") || message.Contains("功率达到")) return "POWER_LIMIT";
         if (Math.Abs(s.DutSpeedRpm ?? 0) >= config.Limits.MaxSpeedRpm || message.Contains("超速")) return "OVERSPEED_LIMIT";
         if (s.DutMotorTempC >= config.Limits.DutMotorTripC || s.MotorTempC >= config.Limits.MotorTripC || message.Contains("温度")) return "TEMPERATURE_LIMIT";
@@ -159,17 +160,15 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
             await runtime.StopAsync(true, CancellationToken.None, servoRamp);
             return;
         }
-        if (EndReason == "TEMPERATURE_LIMIT")
+        if (EndReason is "TEMPERATURE_LIMIT" or "DC_CURRENT_LIMIT" or "PHASE_CURRENT_LIMIT")
         {
-            var servoTorque = Math.Max(Math.Abs(runtime.Latest.TargetTorqueNm), Math.Abs(runtime.Latest.ActualTorqueNm));
-            var duration = Math.Max(config.AutoTest.OverTemperatureStopRampSeconds, servoTorque / config.Limits.MaxRampNmPerSec);
-            var servoRamp = Math.Clamp(servoTorque / duration, .05, config.Limits.MaxRampNmPerSec);
-            Notify(AutoTestStage.RAMP_DOWN, $"RAMP_DOWN · 过温保护，DUT/Servo 同步 {duration:F1}s 回零");
-            runtime.RequestStop(false, servoRamp);
-            Notify(AutoTestStage.DUT_STOP, "DUT_STOP · DUT Duty 与伺服扭矩同步斜坡回零");
-            if (stopDut != null) await stopDut(duration, CancellationToken.None);
-            await runtime.StopAsync(false, CancellationToken.None, servoRamp);
-            await runtime.StopAsync(true, CancellationToken.None, servoRamp);
+            Notify(AutoTestStage.DUT_STOP, $"DUT_STOP · {EndReason} 硬跳闸，立即连续发送零电流停机帧");
+            Exception? dutStopFailure = null;
+            try { if (stopDut != null) await stopDut(0, CancellationToken.None); }
+            catch (Exception ex) { dutStopFailure = ex; runtime.Log("dut_emergency_stop_failed", ex.Message); }
+            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · DUT 停机指令已优先发送，负载伺服回零并禁能");
+            await runtime.StopAsync(true, CancellationToken.None);
+            if (dutStopFailure != null) throw new SafetyTripException("DUT 紧急停机帧发送未全部成功", dutStopFailure);
             return;
         }
         if (EndReason == "COMPLETED_STALL_200_RPM")

@@ -263,11 +263,55 @@ Test("malformed feedback trips", () =>
     var mgr=new SafetyManager(config);
     Check(mgr.Evaluate(new(){Connected=true,EtherCatOnline=true,SpeedRpm=double.NaN},DateTimeOffset.UtcNow)!=null);
 });
+Test("DUT hard protection thresholds include 130 C, 35 A bus and 100 A phase current", () =>
+{
+    Check(config.Limits.DutMotorTripC == 130);
+    var now = DateTimeOffset.UtcNow;
+    var healthy = new BenchSnapshot { Connected=true, EtherCatOnline=true, DriveReady=true, State=BenchState.DriveReady, Timestamp=now, PlcHeartbeat=1 };
+    Check(SafetyManager.RequiresImmediateDutStop(new SafetyManager(config).Evaluate(healthy with { DutMotorTempC=130 }, now)!));
+    Check(SafetyManager.RequiresImmediateDutStop(new SafetyManager(config).Evaluate(healthy with { DutCurrentA=35 }, now)!));
+    Check(SafetyManager.RequiresImmediateDutStop(new SafetyManager(config).Evaluate(healthy with { DutPhaseCurrentA=100 }, now)!));
+});
 async Task Wait(Func<bool> condition, double seconds=3)
 {
     var w=Stopwatch.StartNew();
     while(!condition()){if(w.Elapsed.TotalSeconds>seconds)throw new Exception("wait timeout");await Task.Delay(10);}
 }
+async Task VerifyDutHardTrip(BenchSnapshot trip, bool autoTest)
+{
+    var bridge = new SafetyDutBridge();
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    if (autoTest) runtime.EmergencyStopDutAsync = bridge.StopDutAsync;
+    await runtime.StartAsync(CancellationToken.None);
+    if (autoTest) runtime.AcquireAutoTest();
+    bridge.SetSnapshot(trip);
+    await Wait(() => bridge.StopCalls == 1 && bridge.ServoStopWrites > 0);
+
+    var events = bridge.Events;
+    var frames = bridge.StopFrames;
+    Check(events.IndexOf("dut-stop-start") >= 0 && events.IndexOf("dut-stop-complete") < events.IndexOf("servo-stop"),
+        "DUT stop frames must complete before the first servo stop command");
+    Check(frames.Count == VescEmergencyStop.FrameCount, "hard trip must send exactly three stop frames in its first latched action");
+    foreach (var captured in frames)
+    {
+        var pending = captured.Frame.ToList();
+        Check(VescProtocol.TryTakeFrame(pending, out var payload));
+        Check(payload[0] == VescProtocol.CommSetCurrent && BinaryPrimitives.ReadInt32BigEndian(payload.AsSpan(1)) == 0,
+            "hard trip frame must be COMM_SET_CURRENT zero");
+    }
+    Check((frames[^1].At - frames[0].At).TotalMilliseconds >= VescEmergencyStop.FrameIntervalMs,
+        "repeated stop frames must be separated in time");
+    Check(!bridge.Active && runtime.Owner == ControlOwner.Safety, "hard trip must clear active DUT output and latch safety ownership");
+    await Task.Delay(80);
+    Check(bridge.StopCalls == 1 && bridge.SetCalls == 0, "latched hard trip must not automatically restart or repeat the active command");
+    Throws(() => runtime.SetDutAsync(DutControlMode.DutyCycle, .2, CancellationToken.None).GetAwaiter().GetResult());
+}
+tests.Add(("manual mode 130 C trip stops DUT before servo and cannot auto-resume", () =>
+    VerifyDutHardTrip(new BenchSnapshot { DutMotorTempC=130 }, autoTest:false)));
+tests.Add(("automatic mode 35 A bus-current trip stops DUT before servo", () =>
+    VerifyDutHardTrip(new BenchSnapshot { DutCurrentA=35 }, autoTest:true)));
+tests.Add(("automatic mode 100 A phase-current trip stops DUT before servo", () =>
+    VerifyDutHardTrip(new BenchSnapshot { DutPhaseCurrentA=100 }, autoTest:true)));
 tests.Add(("AUTO_TEST ownership rejects manual service commands", async () =>
 {
     var bridge = new MockRealtimeBridge(config);
@@ -484,3 +528,88 @@ foreach(var t in tests)
 }
 Console.WriteLine($"RESULT {tests.Count-failures}/{tests.Count} passed");
 return failures==0?0:1;
+
+sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
+{
+    private readonly object _gate = new();
+    private readonly List<string> _events = [];
+    private readonly List<(DateTimeOffset At, byte[] Frame)> _stopFrames = [];
+    private BenchSnapshot _snapshot = new();
+    private uint _heartbeat;
+    private int _stopCalls;
+    private int _servoStopWrites;
+    private int _setCalls;
+
+    public bool IsSimulation => true;
+    public bool CanWrite => true;
+    public bool CanControlDut => true;
+    public IReadOnlyList<string> AvailableDutPorts => [];
+    public bool Active { get; private set; } = true;
+    public int StopCalls => Volatile.Read(ref _stopCalls);
+    public int ServoStopWrites => Volatile.Read(ref _servoStopWrites);
+    public int SetCalls => Volatile.Read(ref _setCalls);
+    public List<string> Events { get { lock (_gate) return [.. _events]; } }
+    public List<(DateTimeOffset At, byte[] Frame)> StopFrames { get { lock (_gate) return [.. _stopFrames]; } }
+
+    public void SetSnapshot(BenchSnapshot snapshot)
+    {
+        lock (_gate) _snapshot = snapshot;
+    }
+
+    public Task ConnectAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task DisconnectAsync() => Task.CompletedTask;
+    public Task ConnectDutAsync(string portName, CancellationToken ct) => Task.CompletedTask;
+    public Task DisconnectDutAsync() => Task.CompletedTask;
+
+    public Task<BenchSnapshot> ReadSnapshotAsync(CancellationToken ct)
+    {
+        BenchSnapshot snapshot;
+        lock (_gate) snapshot = _snapshot;
+        return Task.FromResult(snapshot with
+        {
+            Connected = true,
+            EtherCatOnline = true,
+            DriveReady = true,
+            State = BenchState.DriveReady,
+            Timestamp = DateTimeOffset.UtcNow,
+            PlcHeartbeat = ++_heartbeat
+        });
+    }
+
+    public Task WriteCommandAsync(BenchCommand command, CancellationToken ct)
+    {
+        if (command.StopRequest || command.DisableRequest)
+        {
+            Interlocked.Increment(ref _servoStopWrites);
+            lock (_gate) _events.Add("servo-stop");
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task SetDutAsync(DutControlMode mode, double value, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _setCalls);
+        Active = true;
+        lock (_gate) _events.Add("dut-set");
+        return Task.CompletedTask;
+    }
+
+    public async Task StopDutAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref _stopCalls);
+        Active = false;
+        lock (_gate) _events.Add("dut-stop-start");
+        await VescEmergencyStop.SendAsync((frame, _) =>
+        {
+            lock (_gate)
+            {
+                _stopFrames.Add((DateTimeOffset.UtcNow, [.. frame]));
+                _events.Add("dut-stop-frame");
+            }
+            return Task.CompletedTask;
+        }, ct);
+        lock (_gate) _events.Add("dut-stop-complete");
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
