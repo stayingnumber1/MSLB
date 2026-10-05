@@ -273,6 +273,19 @@ Test("DUT hard protection thresholds include 130 C, 35 A bus and 100 A phase cur
     Check(SafetyManager.RequiresImmediateDutStop(new SafetyManager(config).Evaluate(healthy with { DutCurrentA=35 }, now)!));
     Check(SafetyManager.RequiresImmediateDutStop(new SafetyManager(config).Evaluate(healthy with { DutPhaseCurrentA=100 }, now)!));
 });
+Test("DYN soft zero before precheck only at rest and only for small offsets", () =>
+{
+    var rest = new BenchSnapshot { ExternalHealthy = true, ExternalTorqueNm = 0.066, DutSpeedRpm = 0, ActualTorqueNm = 0 };
+    Check(DynSoftZero.Decide(rest, config) == DynZeroDecision.Zero, "field drift +0.066 N.m at rest must be zeroed");
+    Check(DynSoftZero.Decide(rest with { ExternalTorqueNm = -0.028 }, config) == DynZeroDecision.Zero, "small offsets inside the tolerance are zeroed too");
+    Check(DynSoftZero.Decide(rest with { DutSpeedRpm = config.AutoTest.ZeroRpmTolerance + 1 }, config) == DynZeroDecision.NotAtRest, "turning DUT");
+    Check(DynSoftZero.Decide(rest with { DutSpeedRpm = null }, config) == DynZeroDecision.NotAtRest, "unknown DUT speed");
+    Check(DynSoftZero.Decide(rest with { ActualTorqueNm = config.Limits.ZeroTorqueNm * 5 }, config) == DynZeroDecision.NotAtRest, "servo torque present");
+    Check(DynSoftZero.Decide(rest with { ExternalTorqueNm = DynSoftZero.MaxOffsetNm + 0.01 }, config) == DynZeroDecision.TooLarge, "large offset is not hidden");
+    Check(DynSoftZero.Decide(rest with { ExternalHealthy = false }, config) == DynZeroDecision.NoData, "unhealthy DYN");
+    Check(DynSoftZero.Decide(rest with { ExternalTorqueNm = null }, config) == DynZeroDecision.NoData, "no DYN reading");
+    Check(DynSoftZero.Decide(null, config) == DynZeroDecision.NoData, "no snapshot");
+});
 async Task Wait(Func<bool> condition, double seconds=3)
 {
     var w=Stopwatch.StartNew();

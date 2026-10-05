@@ -580,6 +580,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (string.IsNullOrWhiteSpace(_testMotorModel)) throw new InvalidOperationException("请先输入电机型号，再开始性能测试。");
             AddEvent($"AUTO_TEST 电机型号：{_testMotorModel}");
             if (_recipeTask is { IsCompleted: false }) throw new InvalidOperationException("配方正在运行");
+            await ZeroDynIfAtRestAsync("AUTO_TEST", CancellationToken.None);
             var precheck = RunPrecheck(); PrecheckSummary = precheck;
             if (!precheck.StartsWith("PASS", StringComparison.Ordinal)) throw new InvalidOperationException(precheck);
             if (!Confirm($"确认启动电机参数自动测量？\n配方: {recipe.Name}")) return;
@@ -687,7 +688,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 catch (Exception ex) { AddEvent("自动生成测试日志失败：" + ex.Message); }
             }
         });
-        PrecheckCommand = Command(() => { PrecheckSummary = RunPrecheck(); AddEvent("预检查：" + PrecheckSummary); Refresh(); return Task.CompletedTask; });
+        PrecheckCommand = Command(async () => { await ZeroDynIfAtRestAsync("预检查", CancellationToken.None); PrecheckSummary = RunPrecheck(); AddEvent("预检查：" + PrecheckSummary); Refresh(); });
         ExportCommand = Command(ExportAsync);
     }
     private async Task RestoreAutoTestIdleAfterStopAsync()
@@ -839,18 +840,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private async Task RunAutomaticPrecheckAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var snapshot = Snapshot;
-        if (_sensorRuntime?.CanZeroExternalTorque == true && snapshot != null &&
-            Math.Abs(snapshot.DutSpeedRpm ?? double.MaxValue) <= _config.AutoTest.ZeroRpmTolerance &&
-            Math.Abs(snapshot.ActualTorqueNm) <= _config.Limits.ZeroTorqueNm &&
-            Math.Abs(snapshot.ExternalTorqueNm ?? 0) > _config.AutoTest.DynZeroTorqueToleranceNm)
-        {
-            await _sensorRuntime.ZeroExternalTorqueAsync(ct);
-            AddEvent($"AUTO_TEST DYN 软件清零：原始零偏 {snapshot.ExternalTorqueNm:F3} N·m");
-            await Task.Delay(150, ct);
-        }
+        await ZeroDynIfAtRestAsync("AUTO_TEST", ct);
         var result = RunPrecheck();
         if (!result.StartsWith("PASS", StringComparison.Ordinal)) throw new SafetyTripException(result);
+    }
+    // DYN-200 software zero ahead of a precheck (manual button, test start, and inside the recipe); the
+    // conditions and the offset cap are in DynSoftZero. A failed or refused zero is only reported:
+    // the precheck that follows still rejects a DYN reading outside its tolerance.
+    private async Task ZeroDynIfAtRestAsync(string source, CancellationToken ct)
+    {
+        if (_sensorRuntime?.CanZeroExternalTorque != true) return;
+        var snapshot = Snapshot;
+        switch (DynSoftZero.Decide(snapshot, _config))
+        {
+            case DynZeroDecision.Zero:
+                try
+                {
+                    await _sensorRuntime.ZeroExternalTorqueAsync(ct);
+                    AddEvent($"{source} DYN 软件清零：原始零偏 {snapshot!.ExternalTorqueNm:F3} N·m");
+                    await Task.Delay(150, ct);
+                }
+                catch (InvalidOperationException ex) { AddEvent($"{source} DYN 软件清零失败：{ex.Message}"); }
+                break;
+            case DynZeroDecision.TooLarge:
+                AddEvent($"{source} DYN 读数 {snapshot!.ExternalTorqueNm:F3} N·m 超过软件清零上限 {DynSoftZero.MaxOffsetNm:F2} N·m，未清零；请检查传感器与机械负载");
+                break;
+        }
     }
     private void EnsureExternalTelemetryHealthy()
     {
