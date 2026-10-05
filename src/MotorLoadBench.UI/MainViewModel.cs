@@ -477,7 +477,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 var vescBridge = new VescBridge(new MockRealtimeBridge(moduleConfig), moduleConfig.Vesc);
                 vescBridge.Diagnostic += RecordVescDiagnostic;
                 IRealtimeBridge moduleBridge = vescBridge;
-                _dutRuntime = new BenchRuntime(moduleBridge, moduleConfig, new NullSessionRecorder());
+                _dutRuntime = AttachLoadServo(new BenchRuntime(moduleBridge, moduleConfig, new NullSessionRecorder()));
                 await _dutRuntime.StartAsync(CancellationToken.None);
             }
             try
@@ -882,6 +882,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return value;
     }
     private BenchRuntime Runtime() => _runtime ?? throw new InvalidOperationException("请先连接");
+    // The DUT runtime runs its own SafetyManager over a mock servo. Point its hard-trip stop at the real
+    // load servo: zero that servo's torque first, wait for it, then stop the DUT. With no servo runtime
+    // (or Servo OFF) the DUT stops at once, as before.
+    private BenchRuntime AttachLoadServo(BenchRuntime dutRuntime)
+    {
+        dutRuntime.LoadServoState = () => _runtime?.Latest;
+        dutRuntime.RequestLoadServoStop = (ramp, reason) => _runtime?.RequestStop(true, ramp, "DUT runtime hard trip: " + reason);
+        return dutRuntime;
+    }
     private static bool Confirm(string text) => MessageBox.Show(text, "操作确认", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
     private ICommand Command(Func<Task> action) => new AsyncCommand(async _ =>
     {
@@ -1243,7 +1252,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var moduleConfig = _config with { Vesc = _config.Vesc with { Enabled = false } };
         var vescBridge = new VescBridge(new MockRealtimeBridge(moduleConfig), moduleConfig.Vesc);
         vescBridge.Diagnostic += RecordVescDiagnostic;
-        _dutRuntime = new BenchRuntime(vescBridge, moduleConfig, new NullSessionRecorder());
+        _dutRuntime = AttachLoadServo(new BenchRuntime(vescBridge, moduleConfig, new NullSessionRecorder()));
         try
         {
             await _dutRuntime.StartAsync(ct);
@@ -1330,7 +1339,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var moduleConfig = _config with { Vesc = _config.Vesc with { Enabled = false } };
         var vescBridge = new VescBridge(new MockRealtimeBridge(moduleConfig), moduleConfig.Vesc);
         vescBridge.Diagnostic += RecordVescDiagnostic;
-        _dutRuntime = new BenchRuntime(vescBridge, moduleConfig, new NullSessionRecorder());
+        _dutRuntime = AttachLoadServo(new BenchRuntime(vescBridge, moduleConfig, new NullSessionRecorder()));
         var interrupted = false;
         try
         {

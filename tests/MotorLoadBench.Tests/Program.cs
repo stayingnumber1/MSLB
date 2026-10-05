@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Buffers.Binary;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using MotorLoadBench.Application;
@@ -277,20 +278,27 @@ async Task Wait(Func<bool> condition, double seconds=3)
     var w=Stopwatch.StartNew();
     while(!condition()){if(w.Elapsed.TotalSeconds>seconds)throw new Exception("wait timeout");await Task.Delay(10);}
 }
-async Task VerifyDutHardTrip(BenchSnapshot trip, bool autoTest)
+async Task VerifyDutHardTrip(BenchSnapshot trip, bool autoTest, double servoTorqueNm = 0, int servoZeroDelayMs = 0, bool servoNeverZero = false)
 {
     var bridge = new SafetyDutBridge();
+    if (servoTorqueNm > 0) bridge.LoadServo(servoTorqueNm, servoZeroDelayMs, servoNeverZero);
     await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
     if (autoTest) runtime.EmergencyStopDutAsync = bridge.StopDutAsync;
     await runtime.StartAsync(CancellationToken.None);
     if (autoTest) runtime.AcquireAutoTest();
-    bridge.SetSnapshot(trip);
-    await Wait(() => bridge.StopCalls == 1 && bridge.ServoStopWrites > 0);
+    bridge.SetSnapshot(trip with { TargetTorqueNm = servoTorqueNm, ActualTorqueNm = servoTorqueNm });
+    await Wait(() => bridge.Events.Contains("dut-stop-complete"));
 
     var events = bridge.Events;
     var frames = bridge.StopFrames;
-    Check(events.IndexOf("dut-stop-start") >= 0 && events.IndexOf("dut-stop-complete") < events.IndexOf("servo-stop"),
-        "DUT stop frames must complete before the first servo stop command");
+    // Servo torque first: a DUT stop under a loaded CST servo lets the servo reverse-drive the shaft
+    // (field 2026-10-05: ~6000 rpm reverse, DUT bus 38 -> 48 V).
+    Check(events.IndexOf("servo-stop") >= 0 && events.IndexOf("servo-stop") < events.IndexOf("dut-stop-start"),
+        "the servo stop command must go out before the DUT stop frames");
+    if (servoTorqueNm > 0 && !servoNeverZero)
+        Check(events.IndexOf("servo-torque-zero") >= 0 && events.IndexOf("servo-torque-zero") < events.IndexOf("dut-stop-start"),
+            "the DUT stop must wait until the servo torque is back at zero");
+    Check(bridge.StopRamps[0] == config.AutoTest.StallCrossingTorqueRampNmPerSec, "DUT hard trip must zero the servo torque with the emergency ramp");
     Check(frames.Count == VescEmergencyStop.FrameCount, "hard trip must send exactly three stop frames in its first latched action");
     foreach (var captured in frames)
     {
@@ -306,12 +314,77 @@ async Task VerifyDutHardTrip(BenchSnapshot trip, bool autoTest)
     Check(bridge.StopCalls == 1 && bridge.SetCalls == 0, "latched hard trip must not automatically restart or repeat the active command");
     Throws(() => runtime.SetDutAsync(DutControlMode.DutyCycle, .2, CancellationToken.None).GetAwaiter().GetResult());
 }
-tests.Add(("manual mode 130 C trip stops DUT before servo and cannot auto-resume", () =>
+tests.Add(("manual mode 130 C trip zeroes servo torque before stopping DUT and cannot auto-resume", () =>
     VerifyDutHardTrip(new BenchSnapshot { DutMotorTempC=130 }, autoTest:false)));
-tests.Add(("automatic mode 35 A bus-current trip stops DUT before servo", () =>
+tests.Add(("automatic mode 35 A bus-current trip zeroes servo torque before stopping DUT", () =>
     VerifyDutHardTrip(new BenchSnapshot { DutCurrentA=35 }, autoTest:true)));
-tests.Add(("automatic mode 100 A phase-current trip stops DUT before servo", () =>
+tests.Add(("automatic mode 100 A phase-current trip zeroes servo torque before stopping DUT", () =>
     VerifyDutHardTrip(new BenchSnapshot { DutPhaseCurrentA=100 }, autoTest:true)));
+tests.Add(("loaded 130 C trip stops DUT only after the 2.97 Nm servo torque is back at zero", () =>
+    VerifyDutHardTrip(new BenchSnapshot { DutMotorTempC=130 }, autoTest:true, servoTorqueNm:2.97, servoZeroDelayMs:150)));
+tests.Add(("hard trip still stops DUT when the servo torque never confirms zero", () =>
+    VerifyDutHardTrip(new BenchSnapshot { DutMotorTempC=130 }, autoTest:true, servoTorqueNm:2.97, servoNeverZero:true)));
+tests.Add(("SERVO_REVERSE after a latched trip escalates to the emergency torque ramp", async () =>
+{
+    var bridge = new SafetyDutBridge();
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    var hot = new BenchSnapshot { MotorTempC = config.Limits.MotorTripC };
+    bridge.SetSnapshot(hot);
+    await Wait(() => bridge.StopRamps.Count > 0);
+    Check(bridge.StopRamps[0] == config.Limits.StopRampNmPerSec, "a servo-side trip keeps the normal stop ramp");
+    bridge.SetSnapshot(hot with { SpeedRpm = -config.Drive.ExpectedRotationSign * (config.Limits.LoadedStartReverseTripRpm + 100) });
+    await Wait(() => bridge.StopRamps.Contains(config.AutoTest.StallCrossingTorqueRampNmPerSec));
+}));
+async Task VerifyOrchestratorServoFirst(string endReason, double? expectedDutArg, bool expectDisable)
+{
+    var bridge = new SafetyDutBridge();
+    bridge.LoadServo(2.97, zeroDelayMs: 120, neverZero: false);
+    bridge.SetSnapshot(new BenchSnapshot { TargetTorqueNm = 2.97, ActualTorqueNm = 2.97 });
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    var orchestrator = new TestOrchestrator(runtime, config, new NullSessionRecorder());
+    typeof(TestOrchestrator).GetProperty(nameof(TestOrchestrator.EndReason))!.SetValue(orchestrator, endReason);
+    var calls = new List<(double? Arg, bool TorqueWasZero)>();
+    Func<double?, CancellationToken, Task> stopDut = (arg, _) =>
+    {
+        calls.Add((arg, bridge.Events.Contains("servo-torque-zero")));
+        return Task.CompletedTask;
+    };
+    var safeStop = typeof(TestOrchestrator).GetMethod("SafeStopAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+    await (Task)safeStop.Invoke(orchestrator, [stopDut])!;
+    Check(calls.Count == 1 && calls[0].Arg == expectedDutArg, $"{endReason}: DUT stop must be requested once with {expectedDutArg?.ToString() ?? "null"}");
+    Check(calls[0].TorqueWasZero, $"{endReason}: DUT stop must come after the servo torque is back at zero");
+    Check(bridge.StopRamps[0] == config.AutoTest.StallCrossingTorqueRampNmPerSec, $"{endReason}: servo torque must use the emergency ramp");
+    Check(bridge.DisableRequested == expectDisable, $"{endReason}: servo disable expected={expectDisable}");
+}
+tests.Add(("TEMPERATURE_LIMIT safe stop zeroes servo torque, then stops DUT, then disables", () =>
+    VerifyOrchestratorServoFirst("TEMPERATURE_LIMIT", 0, expectDisable: true)));
+tests.Add(("COMPLETED_STALL_200_RPM safe stop zeroes servo torque before the DUT duty", () =>
+    VerifyOrchestratorServoFirst("COMPLETED_STALL_200_RPM", null, expectDisable: false)));
+tests.Add(("COMPLETED_STALL_CROSSING safe stop zeroes servo torque before the DUT duty", () =>
+    VerifyOrchestratorServoFirst("COMPLETED_STALL_CROSSING", null, expectDisable: true)));
+tests.Add(("DUT-only runtime hard trip zeroes the real load servo torque before stopping the DUT", async () =>
+{
+    // GUI layout: the servo runtime and a separate DUT runtime (VescBridge over a mock servo). Only the
+    // DUT runtime sees the trip here; it must still wait for the real servo (field 2026-10-05 22:22).
+    var servoBridge = new SafetyDutBridge();
+    servoBridge.LoadServo(2.2, zeroDelayMs: 150, neverZero: false);
+    servoBridge.SetSnapshot(new BenchSnapshot { TargetTorqueNm = 2.2, ActualTorqueNm = 2.2 });
+    await using var servoRuntime = new BenchRuntime(servoBridge, config, new NullSessionRecorder());
+    await servoRuntime.StartAsync(CancellationToken.None);
+    var dutBridge = new SafetyDutBridge();
+    await using var dutRuntime = new BenchRuntime(dutBridge, config, new NullSessionRecorder());
+    dutRuntime.LoadServoState = () => servoRuntime.Latest;
+    dutRuntime.RequestLoadServoStop = (ramp, reason) => servoRuntime.RequestStop(true, ramp, "DUT runtime hard trip: " + reason);
+    await dutRuntime.StartAsync(CancellationToken.None);
+    dutBridge.SetSnapshot(new BenchSnapshot { DutMotorTempC = 130 });
+    await Wait(() => dutBridge.Events.Contains("dut-stop-complete"));
+    var zeroAt = servoBridge.FirstAt("servo-torque-zero");
+    var stopAt = dutBridge.FirstAt("dut-stop-start");
+    Check(servoBridge.StopRamps.Contains(config.AutoTest.StallCrossingTorqueRampNmPerSec), "the DUT runtime must ask the real servo for an emergency torque zero");
+    Check(zeroAt is not null && stopAt is not null && zeroAt <= stopAt, "the DUT stop must wait for the real servo torque zero");
+}));
 tests.Add(("AUTO_TEST ownership rejects manual service commands", async () =>
 {
     var bridge = new MockRealtimeBridge(config);
@@ -539,6 +612,16 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
     private int _stopCalls;
     private int _servoStopWrites;
     private int _setCalls;
+    private readonly List<double> _stopRamps = [];
+    private readonly Dictionary<string, DateTimeOffset> _firstAt = [];
+    // Loaded CST servo model: holds _servoTorque until _servoZeroDelay after the first stop command
+    // (never, with _servoNeverZero); reports Servo OFF once a disable was requested at zero torque.
+    private double _servoTorque;
+    private TimeSpan _servoZeroDelay;
+    private bool _servoNeverZero;
+    private DateTimeOffset? _firstStopAt;
+    private bool _disableRequested;
+    private bool _torqueZeroLogged;
 
     public bool IsSimulation => true;
     public bool CanWrite => true;
@@ -550,10 +633,20 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
     public int SetCalls => Volatile.Read(ref _setCalls);
     public List<string> Events { get { lock (_gate) return [.. _events]; } }
     public List<(DateTimeOffset At, byte[] Frame)> StopFrames { get { lock (_gate) return [.. _stopFrames]; } }
+    public List<double> StopRamps { get { lock (_gate) return [.. _stopRamps]; } }
+    public bool DisableRequested { get { lock (_gate) return _disableRequested; } }
+    public DateTimeOffset? FirstAt(string name) { lock (_gate) return _firstAt.TryGetValue(name, out var at) ? at : null; }
+    // Callers hold _gate.
+    private void Record(string name) { _events.Add(name); _firstAt.TryAdd(name, DateTimeOffset.UtcNow); }
 
     public void SetSnapshot(BenchSnapshot snapshot)
     {
         lock (_gate) _snapshot = snapshot;
+    }
+
+    public void LoadServo(double torqueNm, int zeroDelayMs, bool neverZero)
+    {
+        lock (_gate) { _servoTorque = torqueNm; _servoZeroDelay = TimeSpan.FromMilliseconds(zeroDelayMs); _servoNeverZero = neverZero; }
     }
 
     public Task ConnectAsync(CancellationToken ct) => Task.CompletedTask;
@@ -564,14 +657,25 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
     public Task<BenchSnapshot> ReadSnapshotAsync(CancellationToken ct)
     {
         BenchSnapshot snapshot;
-        lock (_gate) snapshot = _snapshot;
+        var now = DateTimeOffset.UtcNow;
+        lock (_gate)
+        {
+            snapshot = _snapshot;
+            if (_servoTorque > 0)
+            {
+                var zero = !_servoNeverZero && _firstStopAt is { } at && now - at >= _servoZeroDelay;
+                if (zero && !_torqueZeroLogged) { _torqueZeroLogged = true; Record("servo-torque-zero"); }
+                var torque = zero ? 0 : _servoTorque;
+                snapshot = snapshot with { TargetTorqueNm = torque, ActualTorqueNm = torque, ServoOn = !(zero && _disableRequested) };
+            }
+        }
         return Task.FromResult(snapshot with
         {
             Connected = true,
             EtherCatOnline = true,
             DriveReady = true,
             State = BenchState.DriveReady,
-            Timestamp = DateTimeOffset.UtcNow,
+            Timestamp = now,
             PlcHeartbeat = ++_heartbeat
         });
     }
@@ -581,7 +685,13 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
         if (command.StopRequest || command.DisableRequest)
         {
             Interlocked.Increment(ref _servoStopWrites);
-            lock (_gate) _events.Add("servo-stop");
+            lock (_gate)
+            {
+                Record("servo-stop");
+                _firstStopAt ??= DateTimeOffset.UtcNow;
+                if (_stopRamps.Count == 0 || _stopRamps[^1] != command.TorqueRampNmPerSec) _stopRamps.Add(command.TorqueRampNmPerSec);
+                if (command.DisableRequest) _disableRequested = true;
+            }
         }
         return Task.CompletedTask;
     }
@@ -590,7 +700,7 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
     {
         Interlocked.Increment(ref _setCalls);
         Active = true;
-        lock (_gate) _events.Add("dut-set");
+        lock (_gate) Record("dut-set");
         return Task.CompletedTask;
     }
 
@@ -598,17 +708,17 @@ sealed class SafetyDutBridge : IRealtimeBridge, IDutMotorBridge
     {
         Interlocked.Increment(ref _stopCalls);
         Active = false;
-        lock (_gate) _events.Add("dut-stop-start");
+        lock (_gate) Record("dut-stop-start");
         await VescEmergencyStop.SendAsync((frame, _) =>
         {
             lock (_gate)
             {
                 _stopFrames.Add((DateTimeOffset.UtcNow, [.. frame]));
-                _events.Add("dut-stop-frame");
+                Record("dut-stop-frame");
             }
             return Task.CompletedTask;
         }, ct);
-        lock (_gate) _events.Add("dut-stop-complete");
+        lock (_gate) Record("dut-stop-complete");
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

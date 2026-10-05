@@ -14,6 +14,7 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
     private uint _heartbeat;
     private string? _lastAlarm;
     private bool _safetyStopLatched;
+    private bool _reverseEscalated;
     private BenchSnapshot _latest = new();
     public BenchSnapshot Latest => Volatile.Read(ref _latest);
     public ConcurrentQueue<Alarm> Alarms { get; } = new();
@@ -28,10 +29,17 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
     public ControlOwner Owner { get; private set; } = ControlOwner.Manual;
     public Func<BenchSnapshot, BenchSnapshot>? SnapshotOverlay { get; set; }
     public Func<CancellationToken, Task>? EmergencyStopDutAsync { get; set; }
+    // Set on a DUT-only runtime (VescBridge over a mock servo): the real load servo. On a DUT hard trip
+    // this runtime then asks that servo to zero its torque and waits for it before stopping the DUT.
+    // Without these hooks its own mock servo (always zero torque) is checked and the DUT stops at once,
+    // ahead of the real servo (field 2026-10-05 22:22: reverse 261 rpm within 45 ms, ~5300 rpm at 0.4 s).
+    public Func<BenchSnapshot?>? LoadServoState { get; set; }
+    public Action<double, string>? RequestLoadServoStop { get; set; }
     public void AcquireAutoTest()
     {
         if (Owner == ControlOwner.Safety) throw new SafetyTripException("安全控制权已锁定");
         _safetyStopLatched = false;
+        _reverseEscalated = false;
         Owner = ControlOwner.AutoTest;
     }
     public void ReleaseAutoTest() { if (Owner == ControlOwner.AutoTest) Owner = ControlOwner.Manual; }
@@ -210,26 +218,43 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
                         var immediateDutStop = SafetyManager.RequiresImmediateDutStop(fault);
                         if (immediateDutStop) Owner = ControlOwner.Safety;
                         var reverseEmergency = fault.StartsWith("SERVO_REVERSE", StringComparison.Ordinal);
-                        var stopRamp = reverseEmergency ? config.AutoTest.StallCrossingTorqueRampNmPerSec : config.Limits.StopRampNmPerSec;
-                        Log("safety_trip_snapshot", $"source=SafetyManager; reason={fault}; action={(immediateDutStop ? "DUT emergency stop first, then Servo Stop+Disable" : "Stop+Disable")}; {SnapshotTrace(s)}");
+                        if (reverseEmergency) _reverseEscalated = true;
+                        // A DUT hard trip takes the DUT drive torque away. Stopping the DUT while the CST
+                        // load still holds its torque lets the servo reverse-drive the shaft up to its speed
+                        // limit (field 2026-10-05: ~6000 rpm reverse, DUT bus 38 -> 48 V). So zero the servo
+                        // torque first with the emergency ramp, and stop the DUT once that is confirmed.
+                        var stopRamp = reverseEmergency || immediateDutStop
+                            ? config.AutoTest.StallCrossingTorqueRampNmPerSec : config.Limits.StopRampNmPerSec;
+                        Log("safety_trip_snapshot", $"source=SafetyManager; reason={fault}; action={(immediateDutStop ? "Servo torque to zero first, then DUT emergency stop, then Servo Disable" : "Stop+Disable")}; {SnapshotTrace(s)}");
+                        RequestStop(true, stopRamp, "SafetyManager:" + fault);
                         if (immediateDutStop)
                         {
+                            // Send the stop command now rather than on the next tick, so the servo ramp-down
+                            // is under way before the DUT stop below can run. A failed write must not keep
+                            // the DUT stop from being scheduled.
                             try
                             {
-                                if (EmergencyStopDutAsync != null)
-                                    await EmergencyStopDutAsync(CancellationToken.None);
-                                else if (bridge is IDutMotorBridge dut)
-                                    await dut.StopDutAsync(CancellationToken.None);
-                                else
-                                    throw new InvalidOperationException("DUT 紧急停机通道不可用");
-                                Log("dut_emergency_stop_sent", $"reason={fault}; repeatedZeroCurrentFrames=true");
+                                BenchCommand stop;
+                                lock (_gate) stop = _command with { Heartbeat = ++_heartbeat };
+                                if (bridge.CanWrite) await bridge.WriteCommandAsync(stop, ct);
                             }
-                            catch (Exception stopEx)
+                            catch (Exception writeEx) when (writeEx is not OperationCanceledException)
                             {
-                                Alarm("dut_emergency_stop_failed", stopEx.Message);
+                                Alarm("stop", writeEx.Message);
                             }
+                            try { RequestLoadServoStop?.Invoke(stopRamp, fault); }
+                            catch (Exception servoEx) { Alarm("load_servo_stop_failed", servoEx.Message); }
+                            var servo = LoadServoState?.Invoke() ?? s;
+                            _ = StopDutAfterServoZeroAsync(fault, servo.TargetTorqueNm, stopRamp);
                         }
-                        RequestStop(true, stopRamp, "SafetyManager:" + fault);
+                        Alarm("safety", fault);
+                    }
+                    else if (fault != null && !_reverseEscalated && fault.StartsWith("SERVO_REVERSE", StringComparison.Ordinal))
+                    {
+                        // A trip is already latched (e.g. with the normal stop ramp) but the shaft is now
+                        // turning backwards: the load torque is driving it. Escalate to the emergency ramp.
+                        _reverseEscalated = true;
+                        RequestStop(true, config.AutoTest.StallCrossingTorqueRampNmPerSec, "SafetyManager:" + fault + " (after latched trip)");
                         Alarm("safety", fault);
                     }
                     recorder.CheckHealth(); recorder.Record(s, PointId);
@@ -265,6 +290,43 @@ public sealed class BenchRuntime(IRealtimeBridge bridge, BenchConfig config, ISe
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    // Hard-trip DUT stop, run beside the control loop (which keeps writing the stop command and
+    // refreshing Latest): wait until the servo torque is confirmed at zero (or the servo is off),
+    // bounded by the expected ramp time + 0.5 s (max 2 s), then stop the DUT either way.
+    private async Task StopDutAfterServoZeroAsync(string fault, double startTorqueNm, double rampNmPerSec)
+    {
+        try
+        {
+            var budget = TimeSpan.FromSeconds(Math.Min(2.0, Math.Abs(startTorqueNm) / rampNmPerSec + 0.5));
+            var watch = Stopwatch.StartNew();
+            var confirmed = false;
+            while (watch.Elapsed < budget)
+            {
+                var s = LoadServoState?.Invoke() ?? Latest;
+                if (!s.ServoOn || (Math.Abs(s.TargetTorqueNm) <= config.Limits.ZeroTorqueNm &&
+                                   Math.Abs(s.ActualTorqueNm) <= config.Limits.ZeroTorqueNm))
+                {
+                    confirmed = true;
+                    break;
+                }
+                await Task.Delay(5);
+            }
+            Log("servo_zero_before_dut_stop", $"reason={fault}; confirmed={confirmed}; waitedMs={watch.ElapsedMilliseconds}; " +
+                $"loadServo={(LoadServoState is null ? "own" : "external")}; " + SnapshotTrace(LoadServoState?.Invoke() ?? Latest));
+            if (EmergencyStopDutAsync != null)
+                await EmergencyStopDutAsync(CancellationToken.None);
+            else if (bridge is IDutMotorBridge dut)
+                await dut.StopDutAsync(CancellationToken.None);
+            else
+                throw new InvalidOperationException("DUT 紧急停机通道不可用");
+            Log("dut_emergency_stop_sent", $"reason={fault}; repeatedZeroCurrentFrames=true");
+        }
+        catch (Exception stopEx)
+        {
+            Alarm("dut_emergency_stop_failed", stopEx.Message);
+        }
     }
 
     private static string SnapshotTrace(BenchSnapshot s) =>

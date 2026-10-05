@@ -151,32 +151,28 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
 
     private async Task SafeStopAsync(Func<double?, CancellationToken, Task>? stopDut)
     {
+        var emergencyRamp = config.AutoTest.StallCrossingTorqueRampNmPerSec;
         if (EndReason == "COMPLETED_STALL_CROSSING")
         {
-            var servoRamp = config.AutoTest.StallCrossingTorqueRampNmPerSec;
-            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · STALL_CROSSING 反转紧急停止");
-            runtime.RequestStop(true, servoRamp, "STALL_CROSSING_EMERGENCY");
-            if (stopDut != null) await stopDut(null, CancellationToken.None);
-            await runtime.StopAsync(true, CancellationToken.None, servoRamp);
+            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · STALL_CROSSING 反转紧急停止：负载伺服扭矩先回零");
+            await ServoZeroThenStopDutAsync(stopDut, null, emergencyRamp, "STALL_CROSSING_EMERGENCY");
+            await runtime.StopAsync(true, CancellationToken.None, emergencyRamp);
             return;
         }
         if (EndReason is "TEMPERATURE_LIMIT" or "DC_CURRENT_LIMIT" or "PHASE_CURRENT_LIMIT")
         {
-            Notify(AutoTestStage.DUT_STOP, $"DUT_STOP · {EndReason} 硬跳闸，立即连续发送零电流停机帧");
-            Exception? dutStopFailure = null;
-            try { if (stopDut != null) await stopDut(0, CancellationToken.None); }
-            catch (Exception ex) { dutStopFailure = ex; runtime.Log("dut_emergency_stop_failed", ex.Message); }
-            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · DUT 停机指令已优先发送，负载伺服回零并禁能");
-            await runtime.StopAsync(true, CancellationToken.None);
-            if (dutStopFailure != null) throw new SafetyTripException("DUT 紧急停机帧发送未全部成功", dutStopFailure);
+            Notify(AutoTestStage.RAMP_DOWN, $"RAMP_DOWN · {EndReason} 硬跳闸：负载伺服扭矩先快速回零，再停 DUT");
+            Exception? failure = null;
+            try { await ServoZeroThenStopDutAsync(stopDut, 0, emergencyRamp, EndReason); }
+            catch (Exception ex) { failure = ex; }
+            await runtime.StopAsync(true, CancellationToken.None, emergencyRamp);
+            if (failure != null) throw failure;
             return;
         }
         if (EndReason == "COMPLETED_STALL_200_RPM")
         {
-            Notify(AutoTestStage.DUT_STOP, "DUT_STOP · 失速接近点已记录，DUT Duty 立即回零");
-            if (stopDut != null) await stopDut(null, CancellationToken.None);
-            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · DUT 已解除驱动，伺服扭矩回零");
-            await runtime.StopAsync(false, CancellationToken.None);
+            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · 失速接近点已记录：负载伺服扭矩先回零，再将 DUT Duty 回零");
+            await ServoZeroThenStopDutAsync(stopDut, null, emergencyRamp, EndReason);
             return;
         }
         Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · 伺服扭矩斜坡回零");
@@ -190,6 +186,28 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
             if (DateTimeOffset.UtcNow >= deadline) throw new SafetyTripException("DUT 停转确认超时；请检查硬件急停与机械状态");
             await Task.Delay(30);
         }
+    }
+
+    // Stop order for hard stops: zero the load servo torque first (StopAsync confirms actual and
+    // target torque at zero, servo stays enabled), then stop the DUT. Stopping the DUT first lets the
+    // CST load reverse-drive the shaft to the servo speed limit (field 2026-10-05: ~6000 rpm reverse,
+    // DUT bus 38 -> 48 V). The DUT is stopped even if the servo zero is not confirmed.
+    private async Task ServoZeroThenStopDutAsync(Func<double?, CancellationToken, Task>? stopDut,
+        double? dutRampSeconds, double servoRampNmPerSec, string source)
+    {
+        Exception? servoFailure = null;
+        try { await runtime.StopAsync(false, CancellationToken.None, servoRampNmPerSec); }
+        catch (Exception ex) { servoFailure = ex; runtime.Log("servo_zero_before_dut_stop_failed", $"{source}: {ex.Message}"); }
+        Notify(AutoTestStage.DUT_STOP, servoFailure == null
+            ? $"DUT_STOP · {source}：伺服扭矩已回零，停止 DUT"
+            : $"DUT_STOP · {source}：伺服扭矩回零未确认，仍停止 DUT");
+        try { if (stopDut != null) await stopDut(dutRampSeconds, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            runtime.Log("dut_emergency_stop_failed", ex.Message);
+            throw new SafetyTripException("DUT 紧急停机帧发送未全部成功", ex);
+        }
+        if (servoFailure != null) throw new SafetyTripException("停 DUT 前伺服扭矩回零未确认", servoFailure);
     }
 
     private BenchSnapshot Current()
