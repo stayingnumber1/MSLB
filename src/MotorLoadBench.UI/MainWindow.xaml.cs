@@ -11,7 +11,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent(); DataContext = _vm; Loaded += SmokeIfRequested; Loaded += ConnectEtherCatIfRequested; Loaded += CaptureServoEnableVescIfRequested; Loaded += CaptureDutRunIfRequested;
-        Loaded += MapSmokeIfRequested;
+        Loaded += MapSmokeIfRequested; Loaded += MapRenderIfRequested;
         _vm.ExportVisualsRequested += ExportVisuals;
         _timer.Tick += (_, _) => { _vm.Refresh(); if (_vm.Snapshot is { Connected: true } s) { Trend.WindowSeconds = _vm.TrendWindowIndex switch { 0 => 10, 1 => 60, _ => 0 }; Trend.Push(s); } PerformanceCurve.SetPoints(_vm.TestResults); };
         _timer.Start(); Closing += OnClosing;
@@ -91,6 +91,30 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(dir, "result.txt"), "FAIL: " + ex);
+            _closing = true; System.Windows.Application.Current.Shutdown(1);
+        }
+    }
+    // --map-render <map_state.json> [out.png]: re-render a saved Map scan without connecting anything.
+    private async void MapRenderIfRequested(object sender, RoutedEventArgs e)
+    {
+        var args = Environment.GetCommandLineArgs();
+        var i = Array.FindIndex(args, a => string.Equals(a, "--map-render", StringComparison.OrdinalIgnoreCase));
+        if (i < 0) return;
+        Hide();
+        var output = i + 2 < args.Length ? args[i + 2] : System.IO.Path.ChangeExtension(i + 1 < args.Length ? args[i + 1] : "map_state.json", ".png");
+        try
+        {
+            if (i + 1 >= args.Length) throw new ArgumentException("--map-render needs the map_state.json path");
+            var state = System.Text.Json.JsonSerializer.Deserialize<MotorLoadBench.Domain.MapScanState>(
+                await System.IO.File.ReadAllTextAsync(args[i + 1]), MotorLoadBench.Domain.BenchConfig.Json)
+                ?? throw new System.IO.InvalidDataException("empty map state");
+            MapScanPanel.RenderPng(MotorLoadBench.Domain.MapScanGrid.FromState(state).Snapshot(),
+                MapScanViewModel.TitleFor(state.MotorModel, state.Plan.Name, state.SavedUtc), output);
+            _closing = true; _timer.Stop(); System.Windows.Application.Current.Shutdown(0);
+        }
+        catch (Exception ex)
+        {
+            await System.IO.File.WriteAllTextAsync(output + ".error.txt", ex.ToString());
             _closing = true; System.Windows.Application.Current.Shutdown(1);
         }
     }

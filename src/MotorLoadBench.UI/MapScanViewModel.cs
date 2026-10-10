@@ -108,7 +108,14 @@ public sealed class MapScanViewModel : INotifyPropertyChanged
             return $"{vesc} · {dyn} · {servo}\n遥测超时 / Fault / 转速 < 50% 目标 → 伺服扭矩先回零，再停 DUT；斜坡后转速跌落且不回升、或 Duty 饱和 → 该点及以上记不可达";
         }
     }
-    public string ExportTitle => $"{_host.MotorModel.Trim()} · {Grid?.Plan.Name} · 效率 % · {DateTime.Now:yyyy-MM-dd HH:mm}";
+    public string ExportTitle => TitleFor(_host.MotorModel, Grid?.Plan.Name, DateTimeOffset.Now);
+    // The preset name already carries the motor ("YKB-145 定点 Map"): do not repeat it.
+    public static string TitleFor(string? motorModel, string? planName, DateTimeOffset when)
+    {
+        var model = motorModel?.Trim() ?? ""; var name = string.IsNullOrWhiteSpace(planName) ? "Map 扫描" : planName;
+        var head = model.Length == 0 || name.Contains(model, StringComparison.OrdinalIgnoreCase) ? name : $"{model} · {name}";
+        return $"{head} · 系统效率 %（第二行 Iq） · {when.LocalDateTime:yyyy-MM-dd HH:mm}";
+    }
     public string PauseButtonText => _orchestrator?.PauseRequested == true ? "恢复" : "暂停";
 
     public ICommand LoadPresetCommand { get; }

@@ -6,11 +6,10 @@ using MotorLoadBench.Domain;
 
 namespace MotorLoadBench.UI;
 
-// Speed (columns) x torque (rows) grid of the Map scan. A PASS cell is shaded by efficiency on a fixed
-// 50-95 % scale; a click raises CellClicked (skip / restore, retest / undo).
+// Speed (columns) x torque (rows) grid of the Map scan. A PASS cell shows the efficiency and Iq and is
+// shaded by efficiency over the measured range; a click raises CellClicked (skip / restore, retest / undo).
 public sealed class MapGridControl : FrameworkElement
 {
-    private const double EfficiencyLow = 50, EfficiencyHigh = 95;
     private static readonly Color Low = Color.FromRgb(27, 70, 78), Mid = Color.FromRgb(30, 143, 117), High = Color.FromRgb(120, 230, 200);
     private IReadOnlyList<MapCellSnapshot> _cells = [];
     private double[] _rpms = [];
@@ -27,7 +26,20 @@ public sealed class MapGridControl : FrameworkElement
         _rpms = [.. cells.Select(c => c.Rpm).Distinct().Order()];
         _torques = [.. cells.Select(c => c.TorqueNm).Distinct().OrderDescending()];
         _hover = _hover == null ? null : cells.FirstOrDefault(c => c.Id == _hover.Id);
+        _scale = EfficiencyScale(cells);
         InvalidateVisual();
+    }
+
+    // Shading follows the measured efficiencies (YKB-145 2026-10-10 spans 34-80 %), at least 10 % wide.
+    private (double Low, double High) _scale = (50, 95);
+    private static (double Low, double High) EfficiencyScale(IReadOnlyList<MapCellSnapshot> cells)
+    {
+        var values = cells.Where(c => c.State == MapCellState.Pass && c.Result?.Efficiency is not null)
+            .Select(c => c.Result!.Efficiency!.Mean).Where(double.IsFinite).ToArray();
+        if (values.Length == 0) return (50, 95);
+        double low = Math.Floor(values.Min()), high = Math.Ceiling(values.Max());
+        if (high - low < 10) { var mid = (low + high) / 2; low = mid - 5; high = mid + 5; }
+        return (low, high);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -77,10 +89,22 @@ public sealed class MapGridControl : FrameworkElement
             {
                 case MapCellState.Pass:
                     var efficiency = cell.Result?.Efficiency?.Mean;
-                    var fill = efficiency is { } e ? Shade(e) : Color.FromRgb(44, 110, 98);
+                    var iq = cell.Result?.IqActual?.Mean;
+                    var fill = efficiency is { } e ? Shade(e, _scale) : Color.FromRgb(44, 110, 98);
                     dc.DrawRoundedRectangle(new SolidColorBrush(fill), null, r, 3, 3);
-                    if (showText) Text(efficiency is { } v ? v.ToString("F1", CultureInfo.InvariantCulture) : "—", r.X + r.Width / 2, r.Y + r.Height / 2,
-                        Luminance(fill) > .45 ? new SolidColorBrush(Color.FromRgb(8, 32, 30)) : Brushes.White, glyphSize, center: true);
+                    var ink = Luminance(fill) > .45 ? Color.FromRgb(8, 32, 30) : Colors.White;
+                    var effText = efficiency is { } v ? v.ToString("F1", CultureInfo.InvariantCulture) : "—";
+                    if (iq is { } a && r.Width >= 46 && r.Height >= 28)
+                    {
+                        // Efficiency over Iq, centred as one block whatever the cell height.
+                        var big = Math.Clamp(r.Height * .36, 10, 15);
+                        var small = Math.Clamp(big * .75, 9, 11.5);
+                        var top = r.Y + (r.Height - 1.3 * (big + small)) / 2;
+                        Text(effText, r.X + r.Width / 2, top + .65 * big, new SolidColorBrush(ink), big, center: true);
+                        Text(string.Create(CultureInfo.InvariantCulture, $"Iq {a:F1} A"), r.X + r.Width / 2, top + 1.3 * big + .65 * small,
+                            new SolidColorBrush(Color.FromArgb(205, ink.R, ink.G, ink.B)), small, center: true);
+                    }
+                    else if (showText) Text(effText, r.X + r.Width / 2, r.Y + r.Height / 2, new SolidColorBrush(ink), glyphSize, center: true);
                     if (cell.Result?.Result == "PASS_WITH_WARNING") dc.DrawEllipse(Brushes.Orange, null, new Point(r.Right - 5, r.Y + 5), 3, 3);
                     break;
                 case MapCellState.Running:
@@ -119,7 +143,7 @@ public sealed class MapGridControl : FrameworkElement
         var muted = new SolidColorBrush(Color.FromRgb(159, 182, 195));
         var gradient = new LinearGradientBrush(new GradientStopCollection { new(Low, 0), new(Mid, .5), new(High, 1) }, 0);
         dc.DrawRectangle(gradient, null, new Rect(x, y, 90, 9));
-        text($"效率 {EfficiencyLow:F0}–{EfficiencyHigh:F0} %", x + 96, y - 3, muted, 10, false, null); x += 190;
+        text($"效率 {_scale.Low:F0}–{_scale.High:F0} % · 第二行 Iq", x + 96, y - 3, muted, 10, false, null); x += 250;
         void Item(Brush? fill, Pen? pen, string label, string glyph = "")
         {
             dc.DrawRoundedRectangle(fill, pen, new Rect(x, y - 1, 14, 11), 2, 2);
@@ -142,6 +166,8 @@ public sealed class MapGridControl : FrameworkElement
             $"{c.Id}   {State(c)}",
             r?.Torque == null ? "尚无测量" : string.Create(CultureInfo.InvariantCulture, $"DYN {r.Torque.Mean:F3} N·m   DUT {r.Speed?.Mean:F0} rpm   η {r.Efficiency?.Mean:F1} %"),
         };
+        if (r?.IqActual != null || r?.DcBusCurrent != null)
+            lines.Add(string.Create(CultureInfo.InvariantCulture, $"Iq {r?.IqActual?.Mean:F1} A   母线电流 {r?.DcBusCurrent?.Mean:F2} A   Vbus {r?.Vbus?.Mean:F1} V"));
         if (r?.InputPower != null || r?.MechanicalPower != null)
             lines.Add(string.Create(CultureInfo.InvariantCulture, $"Pin {r?.InputPower?.Mean:F1} W   Pout {r?.MechanicalPower?.Mean:F1} W   Duty {r?.Duty?.Mean:F0} %   {r?.Temperature?.Mean:F0} °C"));
         if (!string.IsNullOrWhiteSpace(c.Reason)) lines.Add(c.Reason.Length > 60 ? c.Reason[..57] + "..." : c.Reason);
@@ -187,9 +213,9 @@ public sealed class MapGridControl : FrameworkElement
         var plot = PlotRect();
         return _cells.FirstOrDefault(c => CellRect(plot, c).Contains(p));
     }
-    private static Color Shade(double efficiency)
+    private static Color Shade(double efficiency, (double Low, double High) scale)
     {
-        var t = Math.Clamp((efficiency - EfficiencyLow) / (EfficiencyHigh - EfficiencyLow), 0, 1);
+        var t = Math.Clamp((efficiency - scale.Low) / (scale.High - scale.Low), 0, 1);
         return t < .5 ? Lerp(Low, Mid, t * 2) : Lerp(Mid, High, (t - .5) * 2);
     }
     private static Color Lerp(Color a, Color b, double t) => Color.FromRgb((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));

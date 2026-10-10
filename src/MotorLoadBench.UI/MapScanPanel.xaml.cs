@@ -28,12 +28,15 @@ public partial class MapScanPanel : UserControl
 
     private void OnGridChanged() => GridView.SetCells(_vm?.Grid?.Snapshot() ?? []);
 
-    // Rendered off-screen at a fixed size, so the export also works while another tab is shown.
-    private void OnExportVisual(string path)
+    private void OnExportVisual(string path) => RenderPng(_vm?.Grid?.Snapshot() ?? [], _vm?.ExportTitle, path);
+
+    // Rendered off-screen at a fixed size, so the export also works while another tab is shown
+    // (and from a saved map_state.json with --map-render).
+    public static void RenderPng(IReadOnlyList<MotorLoadBench.Domain.MapCellSnapshot> cells, string? title, string path)
     {
         const int width = 1600, height = 760;
-        var view = new MapGridControl { Title = _vm?.ExportTitle };
-        view.SetCells(_vm?.Grid?.Snapshot() ?? []);
+        var view = new MapGridControl { Title = title };
+        view.SetCells(cells);
         view.Measure(new Size(width, height)); view.Arrange(new Rect(0, 0, width, height)); view.UpdateLayout();
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(view);
