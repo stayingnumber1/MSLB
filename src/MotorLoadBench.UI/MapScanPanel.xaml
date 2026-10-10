@@ -1,0 +1,107 @@
+<UserControl x:Class="MotorLoadBench.UI.MapScanPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:MotorLoadBench.UI"
+             Background="#101F2E" Foreground="#EDF6F8" FontFamily="Microsoft YaHei UI" FontSize="12">
+ <UserControl.Resources>
+  <Style TargetType="Button"><Setter Property="Foreground" Value="#EAF1F4"/><Setter Property="Background" Value="#244259"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Height" Value="30"/><Setter Property="Padding" Value="10,0"/><Setter Property="FontSize" Value="12"/></Style>
+  <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="#178D78"/></Style>
+  <Style x:Key="Danger" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="#D94A2F"/><Setter Property="FontWeight" Value="Bold"/></Style>
+  <Style TargetType="TextBox"><Setter Property="Foreground" Value="#F4F8FB"/><Setter Property="Background" Value="#102131"/><Setter Property="BorderBrush" Value="#385163"/><Setter Property="Padding" Value="6,2"/><Setter Property="Height" Value="26"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="FontSize" Value="12"/></Style>
+  <Style TargetType="RadioButton"><Setter Property="Foreground" Value="#EDF6F8"/><Setter Property="Margin" Value="0,0,14,0"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+  <Style x:Key="Lbl" TargetType="TextBlock"><Setter Property="Foreground" Value="#9FB6C3"/><Setter Property="FontSize" Value="11"/></Style>
+  <Style x:Key="Section" TargetType="TextBlock"><Setter Property="Foreground" Value="#73CDD5"/><Setter Property="FontWeight" Value="Bold"/><Setter Property="FontSize" Value="13"/></Style>
+  <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#142536"/><Setter Property="BorderBrush" Value="#2D5565"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="10"/></Style>
+  <Style x:Key="Tile" TargetType="Border"><Setter Property="Background" Value="#0F2030"/><Setter Property="Padding" Value="8,5"/><Setter Property="Margin" Value="0,0,6,6"/></Style>
+  <Style x:Key="Field" TargetType="StackPanel"><Setter Property="Margin" Value="0,0,6,6"/></Style>
+ </UserControl.Resources>
+ <Grid Margin="10">
+  <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition/></Grid.RowDefinitions>
+  <DockPanel>
+   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+    <Button AutomationProperties.AutomationId="MapPrecheck" Content="预检查" Command="{Binding PrecheckCommand}" Width="70"/>
+    <Button AutomationProperties.AutomationId="MapStartNew" Content="新扫描" Command="{Binding StartNewCommand}" Style="{StaticResource Primary}" Width="78" Margin="6,0,0,0" ToolTip="按当前设置重建网格并从头开始"/>
+    <Button AutomationProperties.AutomationId="MapContinue" Content="继续剩余" Command="{Binding ContinueCommand}" Width="78" Margin="6,0,0,0" ToolTip="只测网格中的待测 / 重测点，结果写入同一目录"/>
+    <Button AutomationProperties.AutomationId="MapPause" Content="{Binding PauseButtonText}" Command="{Binding PauseCommand}" Width="62" Margin="6,0,0,0" ToolTip="当前点完成后卸载，DUT 保持冷却转速"/>
+    <Button AutomationProperties.AutomationId="MapStop" Content="正常停止" Command="{Binding StopCommand}" Style="{StaticResource Danger}" Width="78" Margin="6,0,0,0"/>
+    <Button AutomationProperties.AutomationId="MapExport" Content="导出" Command="{Binding ExportCommand}" Width="58" Margin="18,0,0,0"/>
+    <Button AutomationProperties.AutomationId="MapLoadState" Content="载入断点" Command="{Binding LoadStateCommand}" Width="76" Margin="6,0,0,0" ToolTip="打开归档目录中的 map_state.json"/>
+   </StackPanel>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <TextBlock Text="Map 扫描" FontSize="16" FontWeight="Bold" Foreground="#61DEC0" VerticalAlignment="Center"/>
+    <Border Background="{Binding StatusColor}" CornerRadius="3" Padding="9,2" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock AutomationProperties.AutomationId="MapStatus" Text="{Binding StatusText}" Foreground="#0C1825" FontWeight="Bold"/></Border>
+    <TextBlock AutomationProperties.AutomationId="MapProgress" Text="{Binding ProgressText}" Margin="12,0,0,0" Foreground="#C9D8E0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="900"/>
+   </StackPanel>
+  </DockPanel>
+
+  <Grid Grid.Row="1" Margin="0,8,0,0">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition/><ColumnDefinition Width="370"/></Grid.ColumnDefinitions>
+
+   <Border Style="{StaticResource Card}">
+    <StackPanel IsEnabled="{Binding SettingsEditable}">
+     <DockPanel><Button DockPanel.Dock="Right" AutomationProperties.AutomationId="MapPreset" Content="载入 YKB-145 计划" Command="{Binding LoadPresetCommand}" Height="24" FontSize="11"/><TextBlock Text="扫描设置" Style="{StaticResource Section}" VerticalAlignment="Center"/></DockPanel>
+     <TextBlock Text="电机型号" Style="{StaticResource Lbl}" Margin="0,8,0,2"/>
+     <TextBox AutomationProperties.AutomationId="MapMotorModel" Text="{Binding MotorModel, UpdateSourceTrigger=PropertyChanged}"/>
+     <TextBlock Text="转速列表 rpm[:上限 N·m]（DUT 速度环定速）" Style="{StaticResource Lbl}" Margin="0,6,0,2"/>
+     <TextBox AutomationProperties.AutomationId="MapColumnsText" Text="{Binding ColumnsText, UpdateSourceTrigger=PropertyChanged}" Height="56" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/>
+     <UniformGrid Columns="3" Margin="0,6,0,0">
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="默认上限 N·m" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapDefaultCapText" Text="{Binding DefaultCapText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="起始 N·m" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapStartTorqueText" Text="{Binding StartTorqueText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="步长 N·m" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapStepTorqueText" Text="{Binding StepTorqueText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="采样 s" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapSampleSecondsText" Text="{Binding SampleSecondsText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="扭矩斜坡 N·m/s" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapTorqueRampText" Text="{Binding TorqueRampText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="升速 rpm/s" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapSpeedRampText" Text="{Binding SpeedRampText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="稳定超时 s" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapStableTimeoutText" Text="{Binding StableTimeoutText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="冷却转速 rpm" Style="{StaticResource Lbl}" ToolTip="0 = 冷却 / 暂停时停转"/><TextBox AutomationProperties.AutomationId="MapCoolingRpmText" Text="{Binding CoolingRpmText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+     </UniformGrid>
+     <StackPanel Orientation="Horizontal" Margin="0,4,0,0"><TextBlock Text="加载方式" Width="62" Style="{StaticResource Lbl}" VerticalAlignment="Center"/><RadioButton GroupName="MapLoadMode" Content="阶梯递增" IsChecked="{Binding IsStaircase}"/><RadioButton GroupName="MapLoadMode" Content="逐点回零" IsChecked="{Binding IsReturnToZero}"/></StackPanel>
+     <StackPanel Orientation="Horizontal" Margin="0,6,0,0"><TextBlock Text="列顺序" Width="62" Style="{StaticResource Lbl}" VerticalAlignment="Center"/><RadioButton GroupName="MapOrder" Content="升序" IsChecked="{Binding IsAscending}"/><RadioButton GroupName="MapOrder" Content="两端交错" IsChecked="{Binding IsInterleaved}"/></StackPanel>
+     <StackPanel Orientation="Horizontal" Margin="0,6,0,0"><TextBlock Text="扭矩基准" Width="62" Style="{StaticResource Lbl}" VerticalAlignment="Center"/><RadioButton GroupName="MapReference" Content="DYN 闭环" IsChecked="{Binding IsDynClosedLoop}" ToolTip="按 DYN-200 实测调整伺服指令，使轴扭矩对准目标；伺服指令最多高出目标 0.1 N·m"/><RadioButton GroupName="MapReference" Content="伺服指令" IsChecked="{Binding IsServoReference}" ToolTip="直接用目标作伺服指令；本台架 DYN ≈ 1.12×伺服 + 约 0.25 N·m 拖曳，实测会偏高"/></StackPanel>
+     <TextBlock Text="温度门控" Style="{StaticResource Section}" Margin="0,10,0,4"/>
+     <UniformGrid Columns="3">
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="暂停 ≥ °C" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapPauseTempText" Text="{Binding PauseTempText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="恢复 ≤ °C" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapResumeTempText" Text="{Binding ResumeTempText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+     </UniformGrid>
+     <TextBlock Text="不可达判据" Style="{StaticResource Section}" Margin="0,4,0,4"/>
+     <UniformGrid Columns="3">
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="转速跌落 %" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapSpeedDropPctText" Text="{Binding SpeedDropPctText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="持续 s" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapDropConfirmText" Text="{Binding DropConfirmText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+      <StackPanel Style="{StaticResource Field}"><TextBlock Text="Duty ≥ %" Style="{StaticResource Lbl}"/><TextBox AutomationProperties.AutomationId="MapDutyLimitText" Text="{Binding DutyLimitText, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+     </UniformGrid>
+     <Button AutomationProperties.AutomationId="MapApplyGrid" Content="生成网格" Command="{Binding ApplyGridCommand}" Margin="0,6,0,0"/>
+    </StackPanel>
+   </Border>
+
+   <Border Grid.Column="1" Style="{StaticResource Card}" Margin="8,0">
+    <Grid>
+     <Grid.RowDefinitions><RowDefinition Height="24"/><RowDefinition/></Grid.RowDefinitions>
+     <DockPanel><TextBlock DockPanel.Dock="Right" Text="单击待测格：跳过 / 恢复　·　单击已测格：重测 / 撤销" Style="{StaticResource Lbl}" VerticalAlignment="Center"/><TextBlock Text="转速 × 扭矩网格" Style="{StaticResource Section}" VerticalAlignment="Center"/></DockPanel>
+     <local:MapGridControl x:Name="GridView" Grid.Row="1"/>
+    </Grid>
+   </Border>
+
+   <Border Grid.Column="2" Style="{StaticResource Card}">
+    <DockPanel>
+     <StackPanel DockPanel.Dock="Top">
+      <TextBlock Text="当前点" Style="{StaticResource Lbl}"/>
+      <TextBlock AutomationProperties.AutomationId="MapCurrentPoint" Text="{Binding CurrentPointText}" FontSize="17" FontWeight="Bold"/>
+      <TextBlock AutomationProperties.AutomationId="MapStage" Text="{Binding StageText}" Foreground="#29C3E6" TextWrapping="Wrap" Margin="0,2,0,8" MinHeight="32"/>
+      <UniformGrid Columns="2">
+       <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="转速 目标 / DUT rpm" Style="{StaticResource Lbl}"/><TextBlock AutomationProperties.AutomationId="MapSpeed" Text="{Binding SpeedText}" FontSize="16" FontWeight="SemiBold"/></StackPanel></Border>
+       <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="扭矩 目标 · 伺服 / DYN N·m" Style="{StaticResource Lbl}"/><TextBlock AutomationProperties.AutomationId="MapTorque" Text="{Binding TorqueText}" FontSize="16" FontWeight="SemiBold"/></StackPanel></Border>
+       <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="DUT 相电流 · Duty（余量）" Style="{StaticResource Lbl}"/><TextBlock AutomationProperties.AutomationId="MapIqDuty" Text="{Binding IqDutyText}" FontSize="16" FontWeight="SemiBold"/></StackPanel></Border>
+       <Border Style="{StaticResource Tile}"><StackPanel><TextBlock Text="上一点效率" Style="{StaticResource Lbl}"/><TextBlock AutomationProperties.AutomationId="MapEfficiency" Text="{Binding PointEfficiencyText}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+      </UniformGrid>
+      <TextBlock AutomationProperties.AutomationId="MapTemperature" Text="{Binding TemperatureText}" Style="{StaticResource Lbl}" Margin="0,6,0,3"/>
+      <ProgressBar Height="8" Minimum="0" Maximum="{Binding TemperatureMax, Mode=OneWay}" Value="{Binding TemperatureValue, Mode=OneWay}" Foreground="{Binding TemperatureColor}" Background="#0F2030" BorderThickness="0"/>
+      <TextBlock Text="{Binding GateText}" Style="{StaticResource Lbl}" Margin="0,3,0,0"/>
+      <TextBlock Text="失效保护" Style="{StaticResource Section}" Margin="0,10,0,2"/>
+      <TextBlock AutomationProperties.AutomationId="MapProtection" Text="{Binding ProtectionText}" Style="{StaticResource Lbl}" TextWrapping="Wrap" LineHeight="17"/>
+      <TextBlock Text="最近点" Style="{StaticResource Section}" Margin="0,10,0,2"/>
+     </StackPanel>
+     <ListBox AutomationProperties.AutomationId="MapRecent" ItemsSource="{Binding RecentPoints}" Background="Transparent" BorderThickness="0" Foreground="#BDD2DC" FontSize="11" FontFamily="Consolas, Microsoft YaHei UI" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+    </DockPanel>
+   </Border>
+  </Grid>
+ </Grid>
+</UserControl>

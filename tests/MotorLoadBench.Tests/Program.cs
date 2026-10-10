@@ -645,6 +645,251 @@ Test("Windows serial discovery keeps every COM port and orders numerically", () 
     var ports = WindowsSerialPortDiscovery.OrderPorts(["COM5", "com3", "COM12", "COM4", "COM3"]);
     Check(ports.SequenceEqual(["COM3", "COM4", "COM5", "COM12"]));
 });
+// ---- Map scan (DUT speed loop + CST torque steps) ----
+void AddAsync(string name, Func<Task> run) => tests.Add((name, run));
+MapScanPlan SmallMapPlan(params MapColumn[] columns) => new()
+{
+    Columns = [.. columns], StartTorqueNm = .05, TorqueStepNm = .05, SampleSeconds = .5, TorqueRampNmPerSec = .3,
+    SpeedRampRpmPerSec = 5000, StableTimeoutSeconds = 4, SpeedSettleSeconds = 3, Order = MapColumnOrder.Ascending, DynCorrectionMaxNm = 0
+};
+MapCellSnapshot Cell(MapScanGrid grid, double rpm, double torque) => grid.Snapshot().Single(c => c.Id == MapScanPlanner.PointId(rpm, torque));
+Test("Map YKB-145 plan has 117 cells, interleaved column order and validated caps", () =>
+{
+    var plan = MapScanPlanner.Ykb145();
+    Check(new MapScanGrid(plan).Total == 117);
+    Check(MapScanPlanner.OrderedSpeeds(plan).Take(4).SequenceEqual([650.0, 3500, 800, 3250]), "interleaved: lowest, highest, 2nd lowest ...");
+    Check(MapScanPlanner.OrderedSpeeds(plan with { Order = MapColumnOrder.Ascending }).SequenceEqual(plan.Columns.Select(c => c.Rpm)));
+    Check(MapScanPlanner.Torques(plan, plan.Columns[^1]).SequenceEqual([.25, .5, .75, 1.0]));
+    var bench = config with { Limits = config.Limits with { MaxTorqueNm = 8.36, ContinuousTorqueNm = 4, TorqueEnvelope = [new(0, 8.36), new(6000, 8.36)] } };
+    MapScanPlanner.Validate(plan, bench);
+    Throws(() => MapScanPlanner.Validate(plan, bench with { Limits = bench.Limits with { ContinuousTorqueNm = 2.39 } }));
+    Throws(() => MapScanPlanner.Validate(plan with { ResumeTempC = 95 }, bench));
+    Throws(() => MapScanPlanner.Validate(plan with { PauseTempC = 130 }, bench));
+    Throws(() => MapScanPlanner.Validate(plan with { Columns = [new(40, 1)] }, bench));
+    Throws(() => MapScanPlanner.Validate(plan with { Columns = [new(3500, 3)] }, bench with { Limits = bench.Limits with { MaxPowerW = 1000 } }));
+    Throws(() => MapScanPlanner.Validate(plan with { TorqueRampNmPerSec = 1 }, bench));
+});
+Test("Map columns parse rpm:cap with a default cap and reject duplicates", () =>
+{
+    var columns = MapScanPlanner.ParseColumns("800, 650:3，1000：2.75\n1250", 2.5);
+    Check(columns.Select(c => c.Rpm).SequenceEqual([650.0, 800, 1000, 1250]));
+    Check(columns.Select(c => c.MaxTorqueNm).SequenceEqual([3.0, 2.5, 2.75, 2.5]));
+    Throws(() => MapScanPlanner.ParseColumns("650, 650:2", 1));
+    Throws(() => MapScanPlanner.ParseColumns("abc", 1));
+    Check(MapScanPlanner.ParseColumns(MapScanPlanner.FormatColumns(MapScanPlanner.Ykb145().Columns), 9).SequenceEqual(MapScanPlanner.Ykb145().Columns));
+});
+Test("Map grid clicks skip / restore and retest / undo; unreachable marks only pending cells above", () =>
+{
+    var grid = new MapScanGrid(MapScanPlanner.Ykb145());
+    var id = MapScanPlanner.PointId(650, .5);
+    Check(id == "R0650_T0_50");
+    Check(grid.Toggle(id) && Cell(grid, 650, .5).State == MapCellState.Skipped);
+    Check(grid.Toggle(id) && Cell(grid, 650, .5).State == MapCellState.Pending);
+    grid.SetRunning(650, .5);
+    Check(!grid.Toggle(id), "a running cell ignores clicks");
+    grid.Complete(650, .5, MapCellState.Pass, null, null);
+    Check(grid.Toggle(id) && Cell(grid, 650, .5) is { State: MapCellState.Pending, Retest: true });
+    Check(grid.NextPendingTorque(650) == .25);
+    Check(grid.Toggle(id) && Cell(grid, 650, .5).State == MapCellState.Pass, "a second click restores the result");
+    grid.Toggle(MapScanPlanner.PointId(650, 2));
+    Check(grid.MarkPendingUnreachable(650, 1, "test") == 7, "1.25-3.00 minus the skipped 2.00");
+    Check(Cell(grid, 650, 2).State == MapCellState.Skipped && Cell(grid, 650, 1).State == MapCellState.Pending);
+    var json = JsonSerializer.Serialize(grid.ToState("M"), BenchConfig.Json);
+    var back = MapScanGrid.FromState(JsonSerializer.Deserialize<MapScanState>(json, BenchConfig.Json)!);
+    Check(back.Snapshot().Select(c => c.State).SequenceEqual(grid.Snapshot().Select(c => c.State)), "state JSON round trip");
+});
+async Task<(MapScanOrchestrator Runner, List<PointResult> Results, List<double> Speeds, List<double> TorqueAtDutStop)> StartMapScan(
+    BenchRuntime runtime, MockRealtimeBridge bridge, MapScanGrid grid, Action<double>? commanded = null)
+{
+    var runner = new MapScanOrchestrator(runtime, config, new NullSessionRecorder());
+    var results = new List<PointResult>(); var speeds = new List<double>(); var torqueAtStop = new List<double>();
+    runner.PointCompleted += r => { lock (results) results.Add(r); };
+    var run = runner.RunAsync(grid, CancellationToken.None,
+        (rpm, _) => { lock (speeds) speeds.Add(rpm); commanded?.Invoke(rpm); bridge.SetSpeed(rpm); return Task.CompletedTask; },
+        _ => { torqueAtStop.Add(Math.Abs(runtime.Latest.ActualTorqueNm)); commanded?.Invoke(0); bridge.SetSpeed(0); return Task.CompletedTask; });
+    Check(await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(60))) == run, "the Map scan must end by itself");
+    await run;
+    return (runner, results, speeds, torqueAtStop);
+}
+AddAsync("Map scan on mock: every pending cell passes, the skipped cell is untouched, servo zero before DUT stop", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(600, .15), new(1200, .1)));
+    grid.Toggle(MapScanPlanner.PointId(600, .1));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    var (runner, results, speeds, torqueAtStop) = await StartMapScan(runtime, bridge, grid);
+    Check(runner.EndReason == "COMPLETED", runner.EndReason);
+    Check(grid.Count(MapCellState.Pass) == 4 && Cell(grid, 600, .1).State == MapCellState.Skipped);
+    Check(results.Count(r => r.PointId.EndsWith("_NL")) == 2, "one no-load point per column");
+    foreach (var cell in grid.Snapshot().Where(c => c.State == MapCellState.Pass))
+        Check(cell.Result is { Result: "PASS" } r && Math.Abs(r.Torque!.Mean - cell.TorqueNm) < .02 && Math.Abs(r.Speed!.Mean - cell.Rpm) < 5, cell.Id);
+    Check(speeds.Max() == 1200 && speeds[^1] < 1200, "DUT speed ramps up per column and down at the end");
+    Check(torqueAtStop.Count == 1 && torqueAtStop[0] <= config.Limits.ZeroTorqueNm, $"DUT stop must follow the servo torque zero: {string.Join(",", torqueAtStop)}");
+    Check(runtime.Latest.ServoOn, "a normal end keeps the servo enabled at zero torque");
+});
+AddAsync("Map scan marks the speed-drop point and every pending cell above it unreachable", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(1000, .2)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    double target = 0;
+    using var plantStop = new CancellationTokenSource();
+    // Speed loop at its current limit above 0.12 N·m: the shaft settles 10 % below the command.
+    var plant = Task.Run(async () =>
+    {
+        while (!plantStop.IsCancellationRequested)
+        {
+            bridge.SetSpeed(Math.Abs(runtime.Latest.ActualTorqueNm) > .12 ? Volatile.Read(ref target) * .9 : Volatile.Read(ref target));
+            await Task.Delay(5);
+        }
+    });
+    var (runner, results, _, torqueAtStop) = await StartMapScan(runtime, bridge, grid, rpm => Volatile.Write(ref target, rpm));
+    plantStop.Cancel(); await plant;
+    Check(runner.EndReason == "COMPLETED", runner.EndReason);
+    Check(Cell(grid, 1000, .05).State == MapCellState.Pass && Cell(grid, 1000, .1).State == MapCellState.Pass);
+    Check(Cell(grid, 1000, .15) is { State: MapCellState.Unreachable, Reason: { } reason } && reason.Contains("跌落"), Cell(grid, 1000, .15).Reason ?? "");
+    Check(Cell(grid, 1000, .2) is { State: MapCellState.Unreachable, Reason: { } above } && above.Contains("高于不可达点"));
+    Check(results.Any(r => r.PointId == "R1000_T0_15" && r.Result == "UNREACHABLE"), "the unreachable window is kept as a diagnostic result");
+    Check(torqueAtStop.Single() <= config.Limits.ZeroTorqueNm);
+});
+AddAsync("Map scan does not flag a speed sag during the torque ramp that recovers afterwards", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(1000, .15)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    double target = 0;
+    using var plantStop = new CancellationTokenSource();
+    // Soft speed loop (JD-OLD 2026-10-10): 6 % sag while the torque changes, linear recovery over 1 s after.
+    var plant = Task.Run(async () =>
+    {
+        var lastTorque = 0.0; var lastChange = DateTimeOffset.MinValue;
+        while (!plantStop.IsCancellationRequested)
+        {
+            var torque = Math.Abs(runtime.Latest.ActualTorqueNm);
+            if (Math.Abs(torque - lastTorque) > .0005) lastChange = DateTimeOffset.UtcNow;
+            lastTorque = torque;
+            var sag = .06 * Math.Clamp(1 - (DateTimeOffset.UtcNow - lastChange).TotalSeconds, 0, 1);
+            bridge.SetSpeed(Volatile.Read(ref target) * (1 - sag));
+            await Task.Delay(5);
+        }
+    });
+    var (runner, _, _, _) = await StartMapScan(runtime, bridge, grid, rpm => Volatile.Write(ref target, rpm));
+    plantStop.Cancel(); await plant;
+    Check(runner.EndReason == "COMPLETED" && grid.Count(MapCellState.Pass) == 3,
+        string.Join(",", grid.Snapshot().Select(c => $"{c.Id}={c.State}:{c.Reason}")));
+});
+AddAsync("Map scan cools down above the pause temperature and resumes only at the resume temperature", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(800, .1)) with { CoolingRpm = 300 });
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    double dutTemp = 95;
+    runtime.SnapshotOverlay = s => s with { DutMotorTempC = Volatile.Read(ref dutTemp) };
+    await runtime.StartAsync(CancellationToken.None);
+    double commandedRpm = 0;
+    var scan = StartMapScan(runtime, bridge, grid, rpm => Volatile.Write(ref commandedRpm, rpm));
+    await Wait(() => Volatile.Read(ref commandedRpm) == 300, 10);
+    Check(grid.Count(MapCellState.Pass) == 0, "no point may be loaded above the pause temperature");
+    Volatile.Write(ref dutTemp, 70);
+    await Task.Delay(600);
+    Check(grid.Count(MapCellState.Pass) == 0 && Volatile.Read(ref commandedRpm) == 300, "70 °C is above the resume temperature: keep cooling");
+    Volatile.Write(ref dutTemp, 50);
+    var (runner, _, _, _) = await scan;
+    Check(runner.EndReason == "COMPLETED" && grid.Count(MapCellState.Pass) == 2, $"{runner.EndReason} pass={grid.Count(MapCellState.Pass)}");
+});
+AddAsync("Map DYN correction trims the servo command until DYN reads the target", async () =>
+{
+    var plan = SmallMapPlan(new MapColumn(900, .1)) with { StartTorqueNm = .1, TorqueStepNm = .1, TorqueReference = MapTorqueReference.DynClosedLoop, DynCorrectionMaxNm = .05 };
+    var grid = new MapScanGrid(plan);
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    runtime.SnapshotOverlay = s => s with { ExternalTorqueNm = s.ExternalTorqueNm * .7 };
+    await runtime.StartAsync(CancellationToken.None);
+    var (runner, _, _, _) = await StartMapScan(runtime, bridge, grid);
+    var result = Cell(grid, 900, .1).Result!;
+    Check(runner.EndReason == "COMPLETED" && result.Result == "PASS", runner.EndReason);
+    Check(Math.Abs(result.Torque!.Mean - .1) < .02, $"DYN {result.Torque?.Mean:F3}");
+    Check(result.ServoTargetTorque!.Mean > .12, $"servo command {result.ServoTargetTorque?.Mean:F3} must have been raised");
+});
+AddAsync("Map DYN closed loop starts from the no-load drag and flags a cell below it", async () =>
+{
+    // Bench-like DYN: gain 1.3 plus 0.08 N·m servo-side drag that is present even at zero servo torque.
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(1000, .15)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    // Input current scaled too, so the mock's efficiency stays below 100 % with the extra DYN torque.
+    runtime.SnapshotOverlay = s => s with { ExternalTorqueNm = s.ExternalTorqueNm is { } t ? Math.Abs(t) * 1.3 + .08 : null, DutCurrentA = s.DutCurrentA * 3 + .5 };
+    await runtime.StartAsync(CancellationToken.None);
+    var (runner, results, _, _) = await StartMapScan(runtime, bridge, grid);
+    Check(runner.EndReason == "COMPLETED", runner.EndReason);
+    Check(results.Single(r => r.PointId == "R1000_NL").Torque!.Mean is > .07 and < .09, "the no-load point measures the drag");
+    Check(Cell(grid, 1000, .05) is { State: MapCellState.Pass, Result: { Result: "PASS_WITH_WARNING", Reason: { } reason } } && reason.Contains("拖曳"),
+        Cell(grid, 1000, .05).Result?.Reason ?? "no result");
+    foreach (var torque in new[] { .1, .15 })
+    {
+        var r = Cell(grid, 1000, torque).Result!;
+        Check(r.Result == "PASS" && Math.Abs(r.Torque!.Mean - torque) < .02, $"{torque}: {r.Result} DYN {r.Torque?.Mean:F3}");
+        Check(r.ServoTargetTorque!.Mean < torque - .03, $"{torque}: servo {r.ServoTargetTorque?.Mean:F3} must sit below the target");
+    }
+});
+AddAsync("Map scan fault zeroes the servo torque before stopping the DUT, then disables the servo", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(700, .15)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    var fault = 0;
+    runtime.SnapshotOverlay = s => Volatile.Read(ref fault) == 0 ? s : s with { DutFaultCode = 5 };
+    await runtime.StartAsync(CancellationToken.None);
+    var runner = new MapScanOrchestrator(runtime, config, new NullSessionRecorder());
+    var torqueAtStop = new List<double>();
+    var run = runner.RunAsync(grid, CancellationToken.None, (rpm, _) => { bridge.SetSpeed(rpm); return Task.CompletedTask; },
+        _ => { torqueAtStop.Add(Math.Abs(runtime.Latest.ActualTorqueNm)); bridge.SetSpeed(0); return Task.CompletedTask; });
+    await Wait(() => runner.CurrentPoint == "R0700_T0_10" && runner.Stage == MapScanStage.SAMPLE, 15);
+    Volatile.Write(ref fault, 1);
+    var tripped = false;
+    try { await run; } catch (SafetyTripException) { tripped = true; }
+    Check(tripped && runner.EndReason == "DUT_FAULT", runner.EndReason);
+    Check(torqueAtStop.Count == 1 && torqueAtStop[0] <= config.Limits.ZeroTorqueNm, $"DUT stop at servo torque {string.Join(",", torqueAtStop)}");
+    await Wait(() => !runtime.Latest.ServoOn, 3);
+    Check(Cell(grid, 700, .1).State == MapCellState.Pending && Cell(grid, 700, .15).State == MapCellState.Pending, "the interrupted cell is measured again on continue");
+});
+AddAsync("Map scan starts from a fresh CST enable when the servo is already on", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(800, .05)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    await runtime.StartAsync(CancellationToken.None);
+    runtime.Enable(); await Wait(() => runtime.Latest.ServoOn);
+    var sawOff = false;
+    using var watchStop = new CancellationTokenSource();
+    var watcher = Task.Run(async () => { while (!watchStop.IsCancellationRequested) { if (!runtime.Latest.ServoOn) sawOff = true; await Task.Delay(2); } });
+    var (runner, _, _, _) = await StartMapScan(runtime, bridge, grid);
+    watchStop.Cancel(); await watcher;
+    Check(sawOff, "an already enabled servo must be disabled before the CST zero-torque enable");
+    Check(runner.EndReason == "COMPLETED" && grid.Count(MapCellState.Pass) == 1, runner.EndReason);
+});
+AddAsync("Map scan fault still disables the servo when the DUT stop cannot be sent", async () =>
+{
+    var grid = new MapScanGrid(SmallMapPlan(new MapColumn(700, .1)));
+    var bridge = new MockRealtimeBridge(config);
+    await using var runtime = new BenchRuntime(bridge, config, new NullSessionRecorder());
+    var fault = 0;
+    runtime.SnapshotOverlay = s => Volatile.Read(ref fault) == 0 ? s : s with { DutFaultCode = 5 };
+    await runtime.StartAsync(CancellationToken.None);
+    var runner = new MapScanOrchestrator(runtime, config, new NullSessionRecorder());
+    var run = runner.RunAsync(grid, CancellationToken.None, (rpm, _) => { bridge.SetSpeed(rpm); return Task.CompletedTask; },
+        _ => throw new IOException("VESC USB gone"));
+    await Wait(() => runner.Stage == MapScanStage.SAMPLE, 15);
+    Volatile.Write(ref fault, 1);
+    Exception? error = null;
+    try { await run; } catch (Exception ex) { error = ex; }
+    Check(error is SafetyTripException && runner.EndReason == "DUT_FAULT", $"{runner.EndReason}: {error?.GetType().Name}");
+    await Wait(() => !runtime.Latest.ServoOn, 3);
+    Check(runner.StopDetail?.Contains("DUT 停机指令发送失败") == true, runner.StopDetail ?? "");
+});
 int failures=0;
 foreach(var t in tests)
 {

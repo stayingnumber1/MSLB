@@ -148,7 +148,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         get => _motorModel;
         set
         {
-            if (_orchestrator?.Running == true || _motorModel == value) return;
+            if (_orchestrator?.Running == true || MapScan?.IsRunning == true || _motorModel == value) return;
             _motorModel = value?.Trim() ?? "";
             PropertyChanged?.Invoke(this, new(nameof(MotorModel)));
         }
@@ -320,8 +320,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ICommand RunRecipeCommand { get; }
     public ICommand ExportCommand { get; }
     public ICommand PrecheckCommand { get; }
+    // Map scan tab (MapScanViewModel): same runtimes, recorder, precheck and event log as P1.
+    public MapScanViewModel MapScan { get; }
+    internal BenchRuntime? ServoRuntime => _runtime;
+    internal BenchRuntime? DutRuntime => _dutRuntime;
+    internal BenchRuntime? SensorRuntime => _sensorRuntime;
+    internal MockRealtimeBridge? SimulationBridge => _mock;
+    internal SessionRecorder? Recorder => _recorder;
+    internal BenchConfig Config => _config;
+    internal string RootDirectory => _root;
+    internal bool IsRecipeRunning => _orchestrator?.Running == true;
+    internal Task MapAutomaticPrecheckAsync(CancellationToken ct) => RunAutomaticPrecheckAsync(ct);
+    internal void EnsureMapTelemetryHealthy() => EnsureExternalTelemetryHealthy();
+    internal void MapEvent(string message) => AddEvent(message);
+    internal void MapError(Exception ex) => ShowError(ex);
+    internal static bool MapConfirm(string text) => Confirm(text);
+    internal static string SafeFileTag(string value) => SafeFileName(value);
+    internal async Task<string> MapPrecheckAsync()
+    {
+        await ZeroDynIfAtRestAsync("MAP", CancellationToken.None);
+        PrecheckSummary = RunPrecheck(); AddEvent("Map 预检查：" + PrecheckSummary); Refresh();
+        return PrecheckSummary;
+    }
+    internal async Task ConnectSimulationForMapAsync()
+    {
+        ConnectionMode = 0;
+        await ConnectAsync();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (Snapshot?.DriveReady != true)
+        {
+            if (watch.Elapsed.TotalSeconds > 4) throw new TimeoutException("仿真连接未就绪");
+            await Task.Delay(20);
+        }
+    }
     public MainViewModel()
     {
+        MapScan = new MapScanViewModel(this);
         try { ReadConfig(); RecipeJson = JsonSerializer.Serialize(TorqueCurveRecipeFactory.CreateStandardPerformance(_config), BenchConfig.Json); RefreshDutPorts(); RefreshSensorPorts(); }
         catch (Exception ex) { _configError = ex.Message; AddEvent("配置错误：" + ex.Message); }
         EtherCatAdaptersCommand = Command(() => ProbeEtherCatAsync("adapters"));
@@ -409,7 +443,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         });
         LoadCommand = Command(async () =>
         {
-            if (_orchestrator?.Running == true) throw new InvalidOperationException("自动配方运行中禁止手动加载");
+            if (_orchestrator?.Running == true || MapScan.IsRunning) throw new InvalidOperationException("自动配方运行中禁止手动加载");
             if (ControlModeIndex != 1) throw new InvalidOperationException("请先选择 CST 电子负载模式");
             var torque = Number(TorqueText);
             var ramp = Number(RampText);
@@ -580,6 +614,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (string.IsNullOrWhiteSpace(_testMotorModel)) throw new InvalidOperationException("请先输入电机型号，再开始性能测试。");
             AddEvent($"AUTO_TEST 电机型号：{_testMotorModel}");
             if (_recipeTask is { IsCompleted: false }) throw new InvalidOperationException("配方正在运行");
+            if (MapScan.IsRunning) throw new InvalidOperationException("Map 扫描正在运行，先停止");
             await ZeroDynIfAtRestAsync("AUTO_TEST", CancellationToken.None);
             var precheck = RunPrecheck(); PrecheckSummary = precheck;
             if (!precheck.StartsWith("PASS", StringComparison.Ordinal)) throw new InvalidOperationException(precheck);
@@ -1014,6 +1049,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_recipeCts != null) await _recipeCts.CancelAsync();
         if (_recipeTask != null) try { await _recipeTask; } catch (Exception) { }
+        await MapScan.CancelAsync();
     }
     private async Task DisconnectAsync()
     {
@@ -1162,7 +1198,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             try
             {
-                if (_orchestrator?.Running == true)
+                if (_orchestrator?.Running == true || MapScan.IsRunning)
                 {
                     Runtime().RequestStop();
                     await CancelRecipeAsync();
@@ -1411,6 +1447,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             nameof(CstLoadStatusDisplay), nameof(CstLimitsText), nameof(StateText), nameof(SessionText),
             nameof(Phase), nameof(ServoEnableStatusDisplay), nameof(ConfigurationInfo), nameof(RecipeNameDisplay),
             nameof(AutoTestStatus), nameof(AutoTestStatusColor), nameof(AutoProgressText), nameof(PrecheckSummary), nameof(AutoTestConfigurationEnabled), nameof(IsAutoTestRunning), nameof(Phase), nameof(AutoCurrentPoint), nameof(AutoTargetTorque), nameof(AutoSampleCount), nameof(AutoLiveMetrics), nameof(VescPrecheckColor), nameof(ServoPrecheckColor), nameof(DynPrecheckColor), nameof(ZeroPrecheckColor), nameof(ConfigPrecheckColor) }) PropertyChanged?.Invoke(this, new(p));
+        MapScan.Refresh();
     }
     private void RefreshDutPorts()
     {
