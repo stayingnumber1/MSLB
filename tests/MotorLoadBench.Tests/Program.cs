@@ -377,6 +377,15 @@ tests.Add(("COMPLETED_STALL_200_RPM safe stop zeroes servo torque before the DUT
     VerifyOrchestratorServoFirst("COMPLETED_STALL_200_RPM", null, expectDisable: false)));
 tests.Add(("COMPLETED_STALL_CROSSING safe stop zeroes servo torque before the DUT duty", () =>
     VerifyOrchestratorServoFirst("COMPLETED_STALL_CROSSING", null, expectDisable: true)));
+tests.Add(("COMPLETED_END_TORQUE safe stop zeroes servo torque before the DUT duty", () =>
+    VerifyOrchestratorServoFirst("COMPLETED_END_TORQUE", null, expectDisable: false)));
+Test("end-above torque is off by default and must be finite and >= 0", () =>
+{
+    Check(config.AutoTest.EndAboveTorqueNm == 0);
+    (config with { AutoTest = config.AutoTest with { EndAboveTorqueNm = 2.9 } }).Validate();
+    Throws(() => (config with { AutoTest = config.AutoTest with { EndAboveTorqueNm = -1 } }).Validate());
+    Throws(() => (config with { AutoTest = config.AutoTest with { EndAboveTorqueNm = double.NaN } }).Validate());
+});
 tests.Add(("DUT-only runtime hard trip zeroes the real load servo torque before stopping the DUT", async () =>
 {
     // GUI layout: the servo runtime and a separate DUT runtime (VescBridge over a mock servo). Only the
@@ -437,6 +446,36 @@ tests.Add(("full mock recipe + CSV + JSON + stop",async () =>
     }
     Check(File.ReadAllLines(Path.Combine(recorder.DirectoryPath,"samples.csv")).Length>10);
     Check(File.Exists(Path.Combine(recorder.DirectoryPath,"closed.json")));
+}));
+tests.Add(("EndAboveTorqueNm ends the sweep once the measured torque is above it and records the final point", async () =>
+{
+    // Constant mock speed (no sustained decline, so no STALL_APPROACH); mock DYN torque = servo actual torque.
+    var c = config with
+    {
+        Limits = config.Limits with { MaxTorqueNm = .3, ContinuousTorqueNm = .3, TorqueEnvelope = [new(0, .3), new(6000, .3)] },
+        AutoTest = config.AutoTest with { EndAboveTorqueNm = .2, TorqueRangeMaxNm = .3 }
+    };
+    c.Validate();
+    var bridge = new MockRealtimeBridge(c);
+    var recorder = new SessionRecorder(Path.Combine(Environment.CurrentDirectory, "artifacts", "test-sessions"), c, true, "test");
+    await using var runtime = new BenchRuntime(bridge, c, recorder);
+    await runtime.StartAsync(CancellationToken.None);
+    runtime.Enable(); await Wait(() => runtime.Latest.ServoOn);
+    TestPoint P(string id, double nm) => new() { Id = id, TorqueNm = nm, RampNmPerSec = .3, StableSeconds = .05, SampleSeconds = 1, MaxDurationSeconds = 6 };
+    var recipe = new Recipe { Points = [P("T0_10", .10), P("T0_24", .24)] };
+    var runner = new TestOrchestrator(runtime, c, recorder);
+    var run = runner.RunAsync(recipe, CancellationToken.None, preparePoint: (_, _) => { bridge.SetSpeed(3000); return Task.CompletedTask; });
+    Check(await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20))) == run, "the sweep must end by itself");
+    await run;
+    Check(runner.EndReason == "COMPLETED_END_TORQUE", $"end reason {runner.EndReason}");
+    var results = Directory.GetFiles(recorder.DirectoryPath, "point_*.json")
+        .Select(path => JsonSerializer.Deserialize<PointResult>(File.ReadAllText(path), BenchConfig.Json)!).ToList();
+    var ids = string.Join(",", results.Select(r => r.PointId).OrderBy(x => x, StringComparer.Ordinal));
+    Check(ids == "END_TORQUE_FINAL,NO_LOAD,T0_10", $"recorded points {ids}");
+    var final = results.Single(r => r.PointId == "END_TORQUE_FINAL");
+    Check(final.Result == "PASS" && final.Torque!.Count >= 2 && final.Torque.Min > .2, $"final point torque min {final.Torque?.Min}");
+    Check(results.Single(r => r.PointId == "T0_10").Torque!.Mean < .2, "points below the end torque are recorded normally");
+    await runtime.StopAsync(true, CancellationToken.None);
 }));
 tests.Add(("safety trip always aborts even Skip recipe",async () =>
 {

@@ -643,7 +643,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                             await _dutRuntime.StopDutAsync(ct);
                             return;
                         }
-                        if (_orchestrator?.EndReason == "COMPLETED_STALL_200_RPM")
+                        if (_orchestrator?.EndReason is "COMPLETED_STALL_200_RPM" or "COMPLETED_END_TORQUE")
                         {
                             _autoTestDutyCommand = 0;
                             await _dutRuntime.SetDutAsync(DutControlMode.DutyCycle, 0, ct, ControlOwner.AutoTest);
@@ -1057,7 +1057,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (r != null) results.Add(r);
         }
         results = results
-            .OrderBy(r => r.PointId == "NO_LOAD" ? 0 : r.PointId == "STALL_FINAL" ? 2 : 1)
+            .OrderBy(r => r.PointId == "NO_LOAD" ? 0 : r.PointId is "STALL_FINAL" or "END_TORQUE_FINAL" ? 2 : 1)
             .ThenBy(r => r.ServoTargetTorque?.Mean ?? r.Torque?.Mean ?? double.MaxValue)
             .ThenBy(r => r.Torque?.Mean ?? double.MaxValue)
             .ThenBy(r => r.PointId, StringComparer.Ordinal)

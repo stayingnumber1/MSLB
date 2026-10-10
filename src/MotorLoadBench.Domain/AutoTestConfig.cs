@@ -22,6 +22,9 @@ public record AutoTestConfig
     public double SpeedPlotMaxRpm { get; init; } = 3500;
     public double LowSpeedStopRpm { get; init; } = 100;
     public double StallStopRpm { get; init; } = 200;
+    // 0 = off. Otherwise the sweep ends once the measured (DYN-200) torque stays above this for
+    // StallConfirmSeconds; for motors without a temperature sensor, where the overtemp trip cannot act.
+    public double EndAboveTorqueNm { get; init; } = 0;
     public double StallConfirmSeconds { get; init; } = .2;
     public double StallCrossingStopRampSeconds { get; init; } = .4;
     public double StallCrossingTorqueRampNmPerSec { get; init; } = 7.0;

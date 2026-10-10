@@ -102,7 +102,7 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
             catch (EndOfSweepException ex)
             {
                 EndReason = ex.Message switch { "LOW_SPEED_STOP" => "RPM_LOW_LIMIT", "STALL_APPROACH_COMPLETE" => "COMPLETED_STALL_200_RPM",
-                    "STALL_CROSSING_COMPLETE" => "COMPLETED_STALL_CROSSING", _ => "COMPLETED" };
+                    "STALL_CROSSING_COMPLETE" => "COMPLETED_STALL_CROSSING", "END_TORQUE_COMPLETE" => "COMPLETED_END_TORQUE", _ => "COMPLETED" };
                 CaptureStop(EndReason, ex.Message); runtime.Log("sweep_end", EndReason);
             }
             if (EndReason == "RUNNING") { EndReason = "COMPLETED"; CaptureStop(EndReason, null); }
@@ -169,9 +169,11 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
             if (failure != null) throw failure;
             return;
         }
-        if (EndReason == "COMPLETED_STALL_200_RPM")
+        if (EndReason is "COMPLETED_STALL_200_RPM" or "COMPLETED_END_TORQUE")
         {
-            Notify(AutoTestStage.RAMP_DOWN, "RAMP_DOWN · 失速接近点已记录：负载伺服扭矩先回零，再将 DUT Duty 回零");
+            Notify(AutoTestStage.RAMP_DOWN, EndReason == "COMPLETED_END_TORQUE"
+                ? $"RAMP_DOWN · DYN 实测扭矩超过结束扭矩 {config.AutoTest.EndAboveTorqueNm:F2} N·m：负载伺服扭矩先回零，再将 DUT Duty 回零"
+                : "RAMP_DOWN · 失速接近点已记录：负载伺服扭矩先回零，再将 DUT Duty 回零");
             await ServoZeroThenStopDutAsync(stopDut, null, emergencyRamp, EndReason);
             return;
         }
@@ -283,6 +285,7 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
         var rpmTrend = new Queue<(DateTimeOffset Time, BenchSnapshot Sample)>();
         var crossingWindow = new Queue<(DateTimeOffset Time, BenchSnapshot Sample)>();
         DateTimeOffset? stallThresholdSince = null;
+        var endWatch = new EndTorqueWatch(config.AutoTest.EndAboveTorqueNm, config.AutoTest.StallConfirmSeconds);
         var lastHighLoadTrace = DateTimeOffset.MinValue;
         List<BenchSnapshot> samples;
         while (true)
@@ -323,6 +326,7 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
                     throw new EndOfSweepException("STALL_CROSSING_COMPLETE");
                 }
                 EnforceLoadedSafety(s, noLoadRpm);
+                if (endWatch.Reached(s, now)) await EndAboveTorqueAsync(p, attempt, endWatch.Above, ct);
                 if (Math.Abs(s.DutSpeedRpm!.Value) <= config.AutoTest.StallStopRpm) stallThresholdSince ??= now;
                 else stallThresholdSince = null;
                 if (stallThresholdSince is { } thresholdStart && now - thresholdStart >= TimeSpan.FromSeconds(config.AutoTest.StallConfirmSeconds))
@@ -356,6 +360,7 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
             while (watch.Elapsed.TotalSeconds - startSample < duration)
             {
                 ct.ThrowIfCancellationRequested(); safety?.Invoke(); var s = Current(); EnforceLoadedSafety(s, noLoadRpm);
+                if (endWatch.Reached(s, DateTimeOffset.UtcNow)) await EndAboveTorqueAsync(p, attempt, endWatch.Above, ct);
                 if (s.Timestamp != last) { samples.Add(s); last = s.Timestamp; }
                 await Task.Delay(10, ct);
             }
@@ -389,6 +394,26 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
         await recorder.SaveResultAsync(result, ct); PointCompleted?.Invoke(result);
     }
 
+    // Measured shaft torque for EndAboveTorqueNm: the DYN-200 reading, not the servo command/estimate.
+    private static double? MeasuredTorqueNm(BenchSnapshot s) =>
+        s.ExternalHealthy && s.ExternalTorqueNm is { } dyn && double.IsFinite(dyn) ? Math.Abs(dyn) : null;
+
+    private sealed class EndTorqueWatch(double endAboveTorqueNm, double confirmSeconds)
+    {
+        private readonly List<BenchSnapshot> _above = [];
+        private DateTimeOffset? _since;
+        public IReadOnlyList<BenchSnapshot> Above => _above;
+
+        // True once the measured torque has stayed above the end torque for the confirm time.
+        public bool Reached(BenchSnapshot s, DateTimeOffset now)
+        {
+            if (endAboveTorqueNm <= 0) return false;
+            if (MeasuredTorqueNm(s) is not { } nm || nm <= endAboveTorqueNm) { _since = null; _above.Clear(); return false; }
+            _since ??= now; _above.Add(s);
+            return now - _since.Value >= TimeSpan.FromSeconds(confirmSeconds);
+        }
+    }
+
     private static bool IsSustainedRpmDecline(IEnumerable<BenchSnapshot> source)
     {
         var rpm = source.Where(s => s.DutSpeedRpm is { }).Select(s => Math.Abs(s.DutSpeedRpm!.Value)).ToArray();
@@ -411,11 +436,13 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
         runtime.Log("stall_approach", $"Hold servo torque {point.TorqueNm:F3} N·m; wait RPM <= {config.AutoTest.StallStopRpm:F0}");
         var finalWindow = new Queue<(DateTimeOffset Time, BenchSnapshot Sample)>();
         DateTimeOffset? belowSince = null;
+        var endWatch = new EndTorqueWatch(config.AutoTest.EndAboveTorqueNm, config.AutoTest.StallConfirmSeconds);
         while (true)
         {
             ct.ThrowIfCancellationRequested(); safety?.Invoke(); var s = Current();
             if (!s.ServoOn) throw new SafetyTripException("Servo 意外下使能");
             var now = DateTimeOffset.UtcNow;
+            if (endWatch.Reached(s, now)) await EndAboveTorqueAsync(point, attempt, endWatch.Above, ct);
             finalWindow.Enqueue((now, s));
             while (finalWindow.Count > 0 && now - finalWindow.Peek().Time > TimeSpan.FromSeconds(Math.Max(.3, config.AutoTest.StallConfirmSeconds))) finalWindow.Dequeue();
             if (Math.Abs(s.DutSpeedRpm!.Value) <= config.AutoTest.StallStopRpm) belowSince ??= now; else belowSince = null;
@@ -424,12 +451,29 @@ public sealed class TestOrchestrator(BenchRuntime runtime, BenchConfig config, I
         }
         var samples = finalWindow.Select(x => x.Sample).ToArray();
         if (samples.Length < 2) throw new PointFailedException("STALL_APPROACH 最终采样不足");
+        await SaveFinalPointAsync("STALL_FINAL", attempt, "STALL_APPROACH: RPM <= 200 confirmed", samples, ct);
+    }
+
+    // EndAboveTorqueNm reached: record the samples above the end torque as the last point (like STALL_FINAL), then end
+    // the sweep; SafeStopAsync zeroes the servo torque before the DUT duty.
+    private async Task EndAboveTorqueAsync(TestPoint point, int attempt, IReadOnlyList<BenchSnapshot> above, CancellationToken ct)
+    {
+        runtime.Log("end_torque_reached", $"point={point.Id}; dynTorque={MeasuredTorqueNm(above[^1]):F3}; " +
+            $"endAboveTorqueNm={config.AutoTest.EndAboveTorqueNm:F3}; confirm={config.AutoTest.StallConfirmSeconds:F2} s");
+        var samples = above.DistinctBy(s => s.Timestamp).ToArray();
+        if (samples.Length >= 2)
+            await SaveFinalPointAsync("END_TORQUE_FINAL", attempt, $"END_TORQUE: DYN torque > {config.AutoTest.EndAboveTorqueNm:F2} N·m confirmed", samples, ct);
+        throw new EndOfSweepException("END_TORQUE_COMPLETE");
+    }
+
+    private async Task SaveFinalPointAsync(string id, int attempt, string note, BenchSnapshot[] samples, CancellationToken ct)
+    {
         var torque = Statistics.From(samples.Select(s => Math.Abs(s.ExternalTorqueNm!.Value)));
         var speed = Statistics.From(samples.Select(s => Math.Abs(s.DutSpeedRpm!.Value)));
         var powers = samples.Select(s => Math.Abs(s.ExternalTorqueNm!.Value * s.DutSpeedRpm!.Value * 2 * Math.PI / 60)).ToArray();
         var efficiencies = samples.Where(s => s.DutElectricalInputPowerW is > 1e-6)
             .Select(s => Math.Abs(s.ExternalTorqueNm!.Value * s.DutSpeedRpm!.Value * 2 * Math.PI / 60) / s.DutElectricalInputPowerW!.Value * 100).ToArray();
-        var result = new PointResult("STALL_FINAL", attempt, "PASS", "STALL_APPROACH: RPM <= 200 confirmed", torque, speed, Statistics.From(powers),
+        var result = new PointResult(id, attempt, "PASS", note, torque, speed, Statistics.From(powers),
             Path.Combine(recorder.DirectoryPath, "raw.csv"), efficiencies.Length > 1 ? Statistics.From(efficiencies) : null, TorqueSource.ExternalSensor,
             Statistics.From(samples.Select(s => Math.Abs(s.DutCurrentA!.Value))), OptionalStatistics(samples, s => s.DutIqCommandA),
             OptionalStatistics(samples, s => s.DutPhaseCurrentA), OptionalStatistics(samples, s => s.DutBusV), OptionalStatistics(samples, s => s.DutElectricalInputPowerW),

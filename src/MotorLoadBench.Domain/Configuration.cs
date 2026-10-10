@@ -157,6 +157,7 @@ public record BenchConfig
             auto.SimulationNoLoadRpm > auto.NominalMaxSpeedRpm ||
             auto.TorqueStableFraction > 1 || auto.RpmStableFraction > 1 || auto.IbusStableFraction > 1 ||
             auto.StallStopRpm >= auto.NominalMaxSpeedRpm || auto.StallCrossingTorqueRampNmPerSec > 10 ||
+            !double.IsFinite(auto.EndAboveTorqueNm) || auto.EndAboveTorqueNm < 0 ||
             auto.DutDriveMode is not "DutyCycle" || auto.DutDriveValue is <= 0 or > 1 || auto.DutDriveValue > Vesc.MaxDutyCycle)
             throw new InvalidDataException("自动测试的额定值、软限制、稳定窗口或 Telemetry Timeout 配置无效。");
         if (Drive.AllowHardwareWrites) ValidateHardware();
